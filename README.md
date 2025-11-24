@@ -24,11 +24,16 @@ SOLink is a privacy-focused messenger built around Solana wallets. Both the clie
 
 ## Quick Start
 
-1. Install Wrangler (globally or via `npm install wrangler`).
-2. Configure secrets via `.env`/`wrangler secret` if needed.
-3. For a local UI preview just open `public/app.html`.
-4. Run backend locally with `wrangler dev --local`.
-5. Deploy to production using `wrangler deploy`.
+### UI Only
+1. Clone or download the repository.
+2. Open `public/app.html` in your browser.
+3. Connect Phantom and start chatting (messages will still be proxied through the deployed worker).
+
+### Backend Contributors (Optional)
+If you want to run the Cloudflare Worker yourself:
+1. Install [Wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/).
+2. Configure KV/Durable Object bindings in `wrangler.toml`.
+3. `wrangler dev --local` to emulate the worker, `wrangler deploy` to ship it.
 
 ## Security Notes
 
