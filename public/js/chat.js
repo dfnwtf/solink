@@ -154,6 +154,7 @@ function cacheDom() {
   ui.copyContactLinkButton = document.querySelector("[data-action=\"copy-contact-link\"]");
   ui.removeContactButton = document.querySelector("[data-action=\"remove-contact\"]");
   ui.toggleFavoriteButton = document.querySelector("[data-action=\"toggle-favorite\"]");
+  ui.saveContactButton = document.querySelector("[data-action=\"toggle-save-contact\"]");
   ui.toggleInfoButton = document.querySelector("[data-action=\"toggle-info\"]");
 
   ui.onboarding = document.querySelector("[data-role=\"onboarding\"]");
@@ -287,6 +288,18 @@ function bindEvents() {
     updateConversationMeta(contact.pubkey);
     setTextContent(ui.toggleFavoriteButton, pinned ? "Unmark favorite" : "Mark favorite");
     showToast(pinned ? "Added to favorites" : "Removed from favorites");
+  });
+
+  ui.saveContactButton?.addEventListener("click", async () => {
+    if (!state.activeContactKey) return;
+    const contact = state.contacts.find((item) => item.pubkey === state.activeContactKey);
+    if (!contact) return;
+    const nextState = !contact.isSaved;
+    await updateContact(state.activeContactKey, { isSaved: nextState, updatedAt: Date.now() });
+    updateContactInState(state.activeContactKey, { isSaved: nextState });
+    renderContactList();
+    updateConversationMeta(state.activeContactKey);
+    showToast(nextState ? "Contact saved" : "Removed from contacts");
   });
 
   ui.toggleInfoButton?.addEventListener("click", () => {
@@ -667,6 +680,7 @@ async function ensureContact(pubkeyInput, overrides = {}) {
     localName: overrides.localName || "",
     pinned: Boolean(overrides.pinned),
     color: overrides.color || null,
+    isSaved: Boolean(overrides.isSaved),
     unreadCount: Number.isFinite(overrides.unreadCount) ? overrides.unreadCount : 0,
     createdAt: overrides.createdAt || Date.now(),
     updatedAt: Date.now(),
@@ -682,6 +696,7 @@ function normalizeContact(contact) {
     localName: contact.localName || "",
     pinned: Boolean(contact.pinned),
     color: contact.color || null,
+     isSaved: Boolean(contact.isSaved),
     unreadCount: Number.isFinite(contact.unreadCount) ? contact.unreadCount : 0,
     createdAt: contact.createdAt || now,
     updatedAt: contact.updatedAt || now,
@@ -822,19 +837,19 @@ async function refreshContacts(shouldUpdateMeta = true) {
 
 function filterContactsList() {
   let contacts = [...state.contacts];
-  switch (state.filter) {
-    case "favorites":
+
+  if (state.filter === "contacts") {
+    contacts = contacts.filter((contact) => contact.isSaved);
+    contacts.sort((a, b) => {
+      const labelA = (a.localName || a.pubkey).toLowerCase();
+      const labelB = (b.localName || b.pubkey).toLowerCase();
+      return labelA.localeCompare(labelB);
+    });
+  } else {
+    contacts = contacts.filter((contact) => Boolean(contact.lastMessage));
+    if (state.filter === "favorites") {
       contacts = contacts.filter((contact) => contact.pinned);
-      break;
-    case "contacts":
-      contacts.sort((a, b) => {
-        const labelA = (a.localName || a.pubkey).toLowerCase();
-        const labelB = (b.localName || b.pubkey).toLowerCase();
-        return labelA.localeCompare(labelB);
-      });
-      break;
-    default:
-      break;
+    }
   }
 
   if (state.contactQuery) {
@@ -856,7 +871,13 @@ function renderContactList() {
   if (!contacts.length) {
     const placeholder = document.createElement("div");
     placeholder.className = "chat-item chat-item--empty";
-    placeholder.textContent = "No chats yet";
+    let emptyText = "No chats yet";
+    if (state.filter === "contacts") {
+      emptyText = "No saved contacts yet";
+    } else if (state.filter === "favorites") {
+      emptyText = "No favorites yet";
+    }
+    placeholder.textContent = emptyText;
     ui.chatList.appendChild(placeholder);
     return;
   }
@@ -1390,6 +1411,7 @@ function updateConversationMeta(pubkey) {
     ui.copyContactLinkButton?.setAttribute("disabled", "disabled");
     ui.removeContactButton?.setAttribute("disabled", "disabled");
     ui.toggleFavoriteButton?.setAttribute("disabled", "disabled");
+    ui.saveContactButton?.setAttribute("disabled", "disabled");
     return;
   }
 
@@ -1408,6 +1430,10 @@ function updateConversationMeta(pubkey) {
   ui.removeContactButton?.removeAttribute("disabled");
   ui.toggleFavoriteButton?.removeAttribute("disabled");
   setTextContent(ui.toggleFavoriteButton, contact?.pinned ? "Unmark favorite" : "Mark favorite");
+  if (ui.saveContactButton) {
+    ui.saveContactButton.removeAttribute("disabled");
+    setTextContent(ui.saveContactButton, contact?.isSaved ? "Remove from contacts" : "Save contact");
+  }
 }
 
 
