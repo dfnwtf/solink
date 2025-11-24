@@ -792,6 +792,7 @@ function updateContactInState(pubkey, changes) {
   if (index === -1) return;
   const merged = normalizeContact({ ...state.contacts[index], ...changes, updatedAt: Date.now() });
   state.contacts[index] = merged;
+  state.contacts = sortByRecentActivity(state.contacts);
 }
 async function refreshContacts(shouldUpdateMeta = true) {
   let contacts = await getContacts();
@@ -1278,9 +1279,11 @@ async function handleIncomingMessages(messages) {
           displayText = decrypted;
         } else {
           console.warn("Failed to decrypt message", payload.id || "unknown");
+          displayText = "[Encrypted message]";
         }
       } else {
         console.warn("Missing session secret for contact", from);
+        displayText = "[Encrypted message]";
       }
     }
 
