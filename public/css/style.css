@@ -538,6 +538,7 @@ button:disabled {
   gap: 1.25rem;
   padding: 1.4rem 1.8rem;
   border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
 }
 
 .chat-column__contact {
