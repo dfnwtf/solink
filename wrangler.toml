@@ -1,0 +1,22 @@
+name = "solink-worker"
+main = "worker/worker.js"
+compatibility_date = "2025-11-23"
+
+workers_dev = true
+
+kv_namespaces = [
+  { binding = "SOLINK_KV", id = "2067bd23f1b04c1a8c1e2487c8be2732", preview_id = "1896d0935027477ca61ff926a0acc219" }
+]
+
+[vars]
+CORS_ALLOW_ORIGIN = "https://solink.chat"
+
+[durable_objects]
+bindings = [
+  { name = "INBOX_DO", class_name = "InboxDurable" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["InboxDurable"]
+
