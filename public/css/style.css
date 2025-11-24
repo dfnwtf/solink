@@ -154,18 +154,15 @@ button:disabled {
 }
 
 .nav-rail__connect {
-  width: 100%;
+  width: 48px;
+  height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  padding: 0.75rem 0.6rem;
   border-radius: 16px;
-  background: linear-gradient(135deg, #a26fff, #c7b4ff);
+  background: linear-gradient(135deg, #a26fff, #c5b2ff);
   color: var(--surface-0);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  box-shadow: 0 20px 36px rgba(48, 32, 78, 0.35);
+  box-shadow: 0 18px 32px rgba(41, 26, 69, 0.35);
 }
 
 .list-column {
@@ -852,6 +849,50 @@ button:disabled {
   transform: translateX(-50%) translateY(0);
 }
 
+.connect-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 13, 20, 0.75);
+  backdrop-filter: blur(18px);
+  z-index: 80;
+}
+
+.connect-overlay[hidden] {
+  display: none !important;
+}
+
+.connect-overlay__panel {
+  width: min(360px, 90vw);
+  padding: 2.4rem 2rem;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(43, 44, 55, 0.98), rgba(29, 30, 38, 0.96));
+  box-shadow: 0 40px 80px rgba(9, 9, 15, 0.6);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.connect-overlay__panel h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.connect-overlay__panel p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.connect-overlay__button {
+  margin-top: 0.5rem;
+  align-self: center;
+  padding-inline: 2.5rem;
+}
+
 .onboarding {
   position: fixed;
   inset: 0;
@@ -982,6 +1023,10 @@ button:disabled {
 
 .icon-wallet {
   mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M20 6H4a2 2 0 0 0-2 2v10h20V8a2 2 0 0 0-2-2Zm-2 7a1.5 1.5 0 1 1 1.5-1.5A1.5 1.5 0 0 1 18 13Zm2-7V4H4v2Z"/></svg>');
+}
+
+.icon-reload {
+  mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M12 6V3L8 7l4 4V8a4 4 0 1 1-4 4H6a6 6 0 1 0 6-6Z"/></svg>');
 }
 
 .icon-search {
