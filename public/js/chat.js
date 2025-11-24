@@ -917,17 +917,9 @@ function createContactElement(contact) {
   const meta = document.createElement("div");
   meta.className = "chat-item__meta";
 
-  const nameRow = document.createElement("div");
-  nameRow.className = "chat-item__name-row";
-
   const nameEl = document.createElement("div");
   nameEl.className = "chat-item__name";
   nameEl.textContent = contact.localName || shortenPubkey(contact.pubkey, 6);
-  nameRow.appendChild(nameEl);
-
-  if (contact.pinned) {
-    nameRow.appendChild(createPinBadge());
-  }
 
   const previewEl = document.createElement("div");
   previewEl.className = "chat-item__preview";
@@ -935,11 +927,15 @@ function createContactElement(contact) {
     ? `${contact.lastMessage.direction === "out" ? "You: " : ""}${truncateText(contact.lastMessage.text || "", 48)}`
     : "No messages yet";
 
-  meta.appendChild(nameRow);
+  meta.appendChild(nameEl);
   meta.appendChild(previewEl);
 
   const aside = document.createElement("div");
   aside.className = "chat-item__aside";
+
+  if (contact.pinned) {
+    aside.appendChild(createPinBadge());
+  }
 
   const timeEl = document.createElement("div");
   timeEl.className = "chat-item__time";

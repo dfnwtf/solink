@@ -454,12 +454,6 @@ button:disabled {
   gap: 0.25rem;
 }
 
-.chat-item__name-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
 .chat-item__name {
   font-size: 0.95rem;
   font-weight: 600;
@@ -475,8 +469,10 @@ button:disabled {
 
 .chat-item__aside {
   display: flex;
+  flex-direction: column;
   align-items: flex-end;
-  gap: 0.35rem;
+  gap: 0.3rem;
+  min-width: 44px;
 }
 
 .chat-item__time {
@@ -491,9 +487,9 @@ button:disabled {
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  background: rgba(140, 91, 255, 0.15);
+  background: rgba(140, 91, 255, 0.18);
   color: var(--accent-soft);
-  box-shadow: 0 0 8px rgba(57, 242, 206, 0.35);
+  box-shadow: 0 0 8px rgba(57, 242, 206, 0.3);
 }
 
 .chat-item__pin svg {
