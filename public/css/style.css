@@ -170,6 +170,12 @@ button:disabled {
   height: 26px;
 }
 
+.nav-rail__connect:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7a83a0, #b2bbd4);
+  box-shadow: 0 22px 40px rgba(21, 22, 30, 0.5);
+  transform: translateY(-2px);
+}
+
 .list-column {
   display: flex;
   flex-direction: column;
