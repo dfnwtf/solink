@@ -671,6 +671,8 @@ button:disabled {
   font-size: 0.95rem;
   line-height: 1.55;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .bubble__text mark {
