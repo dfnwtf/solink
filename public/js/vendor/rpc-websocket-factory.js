@@ -1,8 +1,6 @@
-/**
- * Bundled by jsDelivr using Rollup v2.79.2 and Terser v5.39.0.
- * Original file: /npm/rpc-websockets@7.5.1/dist/lib/client/websocket.browser.js
- *
- * Do NOT use SRI with dynamically generated files! More information: https://www.jsdelivr.com/using-sri-with-dynamic-files
- */
-import e from"/npm/@babel/runtime@7.21.0/helpers/interopRequireDefault/+esm";import t from"/npm/@babel/runtime@7.21.0/helpers/classCallCheck/+esm";import r from"/npm/@babel/runtime@7.21.0/helpers/createClass/+esm";import n from"/npm/@babel/runtime@7.21.0/helpers/inherits/+esm";import o from"/npm/@babel/runtime@7.21.0/helpers/possibleConstructorReturn/+esm";import s from"/npm/@babel/runtime@7.21.0/helpers/getPrototypeOf/+esm";import u from"./eventemitter3-wrapper.js";var i={};!function(i){var c=e;Object.defineProperty(i,"__esModule",{value:!0}),i.default=function(e,t){return new v(e,t)};var a=c(t),l=c(r),f=c(n),m=c(o),p=c(s);function d(e){var t=function(){if("undefined"==typeof Reflect||!Reflect.construct)return!1;if(Reflect.construct.sham)return!1;if("function"==typeof Proxy)return!0;try{return Boolean.prototype.valueOf.call(Reflect.construct(Boolean,[],(function(){}))),!0}catch(e){return!1}}();return function(){var r,n=(0,p.default)(e);if(t){var o=(0,p.default)(this).constructor;r=Reflect.construct(n,arguments,o)}else r=n.apply(this,arguments);return(0,m.default)(this,r)}}var v=function(e){(0,f.default)(r,e);var t=d(r);function r(e,n,o){var s;return(0,a.default)(this,r),(s=t.call(this)).socket=new window.WebSocket(e,o),s.socket.onopen=function(){return s.emit("open")},s.socket.onmessage=function(e){return s.emit("message",e.data)},s.socket.onerror=function(e){return s.emit("error",e)},s.socket.onclose=function(e){s.emit("close",e.code,e.reason)},s}return(0,l.default)(r,[{key:"send",value:function(e,t,r){var n=r||t;try{this.socket.send(e),n()}catch(e){n(e)}}},{key:"close",value:function(e,t){this.socket.close(e,t)}},{key:"addEventListener",value:function(e,t,r){this.socket.addEventListener(e,t,r)}}]),r}(u.EventEmitter)}(i);var c=i.__esModule;export{c as __esModule,i as default};
-//# sourceMappingURL=/sm/25856374f9096f0da81b34fb8616e306c9806af0285548b3bfcd419b10be5440.map
+import RpcWebSocketClient from './rpc-websocket-client.js';
+
+export default function createRpc(url, options = {}, generateRequestId) {
+  return new RpcWebSocketClient(url, options, generateRequestId);
+}
+
