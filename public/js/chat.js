@@ -103,6 +103,7 @@ async function loadWorkspace(walletPubkey) {
   contactProfileLookups.clear();
   contactProfileCooldown.clear();
   clearChatView();
+  updatePaymentRecipient(null);
   renderContactList();
   await initializeProfile();
   await refreshContacts();
@@ -161,6 +162,10 @@ function cacheDom() {
   ui.toggleFavoriteButton = document.querySelector("[data-action=\"toggle-favorite\"]");
   ui.saveContactButton = document.querySelector("[data-action=\"toggle-save-contact\"]");
   ui.toggleInfoButton = document.querySelector("[data-action=\"toggle-info\"]");
+  ui.paymentAmount = document.querySelector("[data-role=\"payment-amount\"]");
+  ui.paymentToken = document.querySelector("[data-role=\"payment-token\"]");
+  ui.paymentRecipient = document.querySelector("[data-role=\"payment-recipient\"]");
+  ui.paymentSendButton = document.querySelector("[data-action=\"send-payment\"]");
 
   ui.onboarding = document.querySelector("[data-role=\"onboarding\"]");
   ui.nicknameForm = document.querySelector("[data-role=\"nickname-form\"]");
@@ -312,6 +317,10 @@ function bindEvents() {
 
   ui.toggleInfoButton?.addEventListener("click", () => {
     ui.infoPanel?.classList.toggle("is-visible");
+  });
+
+  ui.paymentSendButton?.addEventListener("click", () => {
+    showToast("SOL transfers coming soon");
   });
 
   ui.messageInput?.addEventListener("input", handleMessageInput);
@@ -1168,11 +1177,24 @@ function toggleComposer(enabled) {
   if (!enabled && emojiPicker?.isOpen) {
     emojiPicker.close();
   }
+  if (ui.paymentSendButton) {
+    ui.paymentSendButton.disabled = !enabled || !state.activeContactKey;
+  }
 }
 
 function toggleConnectOverlay(visible) {
   if (!ui.connectOverlay) return;
   ui.connectOverlay.hidden = !visible;
+}
+
+function updatePaymentRecipient(pubkey) {
+  if (ui.paymentRecipient) {
+    ui.paymentRecipient.textContent = pubkey ? shortenPubkey(pubkey, 6) : "—";
+  }
+  if (ui.paymentSendButton) {
+    const canSend = Boolean(pubkey && latestAppState?.isAuthenticated);
+    ui.paymentSendButton.disabled = !canSend;
+  }
 }
 
 function insertEmojiAtCursor(emojiChar) {
@@ -1500,6 +1522,7 @@ async function setActiveContact(pubkey) {
   updateConversationMeta(normalized);
   renderMessages(normalized);
   toggleComposer(Boolean(latestAppState?.isAuthenticated));
+  updatePaymentRecipient(normalized);
   handleMessageInput();
 }
 
@@ -1851,6 +1874,7 @@ async function handleAppStateChange(appState) {
   toggleConnectOverlay(!hasSession);
 
   toggleComposer(Boolean(appState?.isAuthenticated && state.activeContactKey));
+  updatePaymentRecipient(state.activeContactKey);
 
   const nextWallet = appState.walletPubkey || null;
   const walletChanged = nextWallet !== state.currentWallet;

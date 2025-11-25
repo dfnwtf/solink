@@ -741,6 +741,10 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.info-panel__section--payment {
+  gap: 0.8rem;
+}
+
 .info-panel__header {
   display: grid;
   grid-template-columns: 60px 1fr;
@@ -768,6 +772,54 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+}
+
+.info-panel__subtitle {
+  font-size: 0.78rem;
+  color: var(--text-subtle);
+  margin: 0.3rem 0 0;
+}
+
+.payment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.payment-field__control {
+  display: grid;
+  grid-template-columns: 1fr 90px;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.payment-field__control input,
+.payment-field__control select {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 0.95rem;
+}
+
+.payment-field__control input {
+  width: 100%;
+}
+
+.payment-field__control select {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.info-panel__notice {
+  font-size: 0.78rem;
+  color: var(--text-subtle);
+  margin: 0;
 }
 
 /* SHARED COMPONENTS ------------------------------------------ */

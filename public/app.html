@@ -191,6 +191,24 @@
           </div>
         </div>
 
+        <div class="info-panel__section info-panel__section--payment">
+          <div>
+            <div class="section-title">Send SOL</div>
+            <p class="info-panel__subtitle">Transfer directly from your wallet.</p>
+          </div>
+          <label class="payment-field">
+            Amount
+            <div class="payment-field__control">
+              <input type="number" min="0" step="0.01" placeholder="0.00" data-role="payment-amount" />
+              <select data-role="payment-token">
+                <option value="SOL">SOL</option>
+              </select>
+            </div>
+          </label>
+          <button type="button" class="primary-button" data-action="send-payment" disabled>Send</button>
+          <p class="info-panel__notice">Recipient: <span data-role="payment-recipient">—</span></p>
+        </div>
+
         <div class="info-panel__section info-panel__section--placeholder">
           <div class="section-title">Group info</div>
           <p>Placeholder for future extensions.</p>
