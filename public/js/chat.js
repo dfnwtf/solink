@@ -6,7 +6,7 @@ import {
   Transaction,
   LAMPORTS_PER_SOL,
 } from "https://cdn.jsdelivr.net/npm/@solana/web3.js@1.91.5/lib/index.browser.esm.js";
-import { Buffer } from "https://cdn.jsdelivr.net/npm/buffer@6.0.3/index-esm.js";
+import { Buffer } from "https://esm.sh/buffer@6.0.3";
 import { createPopup } from "https://cdn.jsdelivr.net/npm/@picmo/popup-picker@5.8.5/+esm";
 import {
   initApp,
