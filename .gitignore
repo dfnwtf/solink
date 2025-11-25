@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+tmp/
+*.log
+.DS_Store
+*.sqlite
+
