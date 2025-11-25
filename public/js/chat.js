@@ -200,6 +200,7 @@ function cacheDom() {
 
   ui.toast = document.querySelector("[data-role=\"toast\"]");
   ui.notificationAudio = document.querySelector("[data-role=\"notification-sound\"]");
+  ui.closeChatButton = document.querySelector("[data-action=\"close-chat\"]");
 
   updatePaymentControls();
 }
@@ -342,6 +343,8 @@ function bindEvents() {
   ui.toggleInfoButton?.addEventListener("click", () => {
     ui.infoPanel?.classList.toggle("is-visible");
   });
+
+  ui.closeChatButton?.addEventListener("click", handleCloseChat);
 
   ui.paymentAmount?.addEventListener("input", updatePaymentControls);
   ui.paymentToken?.addEventListener("change", updatePaymentControls);
@@ -563,6 +566,17 @@ function getContactDisplayName(pubkey, fallbackShort = true) {
     return contact.displayName;
   }
   return fallbackShort ? shortenPubkey(pubkey, 6) : pubkey;
+}
+
+function getSelfDisplayName() {
+  if (state.profile?.displayName) {
+    return state.profile.displayName;
+  }
+  if (state.profile?.nickname) {
+    return `@${state.profile.nickname}`;
+  }
+  const selfPubkey = latestAppState?.walletPubkey || state.currentWallet;
+  return selfPubkey ? shortenPubkey(selfPubkey, 6) : "You";
 }
 
 function formatSolAmount(lamports) {
@@ -1128,6 +1142,11 @@ function clearChatView() {
   toggleEmptyState(true);
   toggleComposer(false);
   updateConversationMeta(null);
+  state.messageQuery = "";
+  if (ui.messageSearchInput) {
+    ui.messageSearchInput.value = "";
+  }
+  updatePaymentRecipient(null);
 }
 
 function updateContactHeader() {
@@ -1352,12 +1371,14 @@ function updatePaymentRecipient(pubkey) {
 async function sendSystemPaymentMessage({ lamports, fromPubkey, toPubkey, signature }) {
   if (!state.activeContactKey) return;
   const timestamp = Date.now();
+  const fromDisplay = getSelfDisplayName();
+  const toDisplay = getContactDisplayName(toPubkey) || shortenPubkey(toPubkey, 6);
   const paymentMeta = {
     lamports,
     from: fromPubkey,
     to: toPubkey,
-    fromName: getContactDisplayName(fromPubkey) || shortenPubkey(fromPubkey, 6),
-    toName: getContactDisplayName(toPubkey) || shortenPubkey(toPubkey, 6),
+    fromName: fromDisplay,
+    toName: toDisplay,
     signature,
   };
   const text = buildPaymentSystemText(paymentMeta);
@@ -1397,6 +1418,11 @@ async function sendSystemPaymentMessage({ lamports, fromPubkey, toPubkey, signat
     renderMessages(state.activeContactKey);
     showToast("Payment sent, but notification could not be delivered");
   }
+}
+
+function handleCloseChat() {
+  clearChatView();
+  history.replaceState(null, "", "#/");
 }
 
 async function handleSendPayment() {

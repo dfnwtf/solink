@@ -164,6 +164,9 @@
             <input type="search" placeholder="Search messages" data-role="message-search-input" autocomplete="off" />
           </form>
           <div class="chat-column__actions">
+            <button type="button" class="ghost-icon-button" data-action="close-chat" aria-label="Close chat">
+              <span class="icon icon-close"></span>
+            </button>
             <button type="button" class="ghost-icon-button" data-action="toggle-info" aria-label="Contact info">
               <span class="icon icon-info"></span>
             </button>
@@ -172,6 +175,9 @@
 
         <div class="chat-column__body">
           <div class="timeline" data-role="message-list"></div>
+          <div class="timeline-empty" data-role="empty-state">
+            Select a chat to start messaging.
+          </div>
         </div>
 
         <footer class="composer" data-role="composer">
