@@ -2043,8 +2043,8 @@ async function initialize() {
   await ensureEncryptionKeys();
   await loadWorkspace(null);
 
-  initApp();
   onStateChange(handleAppStateChange);
+  initApp();
   await loadRouteContact();
 }
 
