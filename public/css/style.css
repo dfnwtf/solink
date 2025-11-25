@@ -904,6 +904,10 @@ button:disabled {
   padding-inline: 2.5rem;
 }
 
+.picmo__popupContainer {
+  z-index: 120;
+}
+
 .onboarding {
   position: fixed;
   inset: 0;
