@@ -160,9 +160,14 @@ button:disabled {
   align-items: center;
   justify-content: center;
   border-radius: 16px;
-  background: linear-gradient(135deg, #a26fff, #c5b2ff);
+  background: linear-gradient(135deg, #5b6275, #8e96ad);
   color: var(--surface-0);
-  box-shadow: 0 18px 32px rgba(41, 26, 69, 0.35);
+  box-shadow: 0 18px 32px rgba(21, 22, 30, 0.4);
+}
+
+.nav-rail__connect .icon {
+  width: 26px;
+  height: 26px;
 }
 
 .list-column {
@@ -855,8 +860,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(12, 13, 20, 0.75);
-  backdrop-filter: blur(18px);
+  background: rgba(12, 13, 20, 0.6);
+  backdrop-filter: blur(10px);
   z-index: 80;
 }
 
@@ -866,11 +871,11 @@ button:disabled {
 
 .connect-overlay__panel {
   width: min(360px, 90vw);
-  padding: 2.4rem 2rem;
-  border-radius: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: linear-gradient(135deg, rgba(43, 44, 55, 0.98), rgba(29, 30, 38, 0.96));
-  box-shadow: 0 40px 80px rgba(9, 9, 15, 0.6);
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
   text-align: center;
   display: flex;
   flex-direction: column;
