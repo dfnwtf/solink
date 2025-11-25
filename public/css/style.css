@@ -239,6 +239,22 @@ button:disabled {
 .profile-card__wallet {
   font-size: 0.78rem;
   color: var(--text-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.profile-card__wallet-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.profile-card__wallet-value {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
 }
 
 .profile-card__status {

@@ -430,7 +430,7 @@ function updateStatusLabel(appState, inlineMessage) {
     setTextContent(ui.statusLabel, "Authenticating...");
     ui.statusIndicator?.classList.remove("is-online");
   } else {
-    setTextContent(ui.statusLabel, `Connected: ${shortenPubkey(appState.walletPubkey)}`);
+    setTextContent(ui.statusLabel, "Connected");
     ui.statusIndicator?.classList.add("is-online");
   }
 }
