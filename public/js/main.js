@@ -1,5 +1,7 @@
 import { fetchNonce, verifySignature, clearSessionToken, getSessionToken } from './api.js';
 
+const AUTO_CONNECT_FLAG_KEY = 'solink-auto-connect';
+
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const BASE58_MAP = BASE58_ALPHABET.split('');
 const MOBILE_REGEX = /android|iphone|ipad|ipod/i;
@@ -13,6 +15,30 @@ const state = {
 };
 
 const listeners = new Set();
+
+function enableAutoConnect() {
+  try {
+    localStorage.setItem(AUTO_CONNECT_FLAG_KEY, '1');
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function disableAutoConnect() {
+  try {
+    localStorage.removeItem(AUTO_CONNECT_FLAG_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function shouldAutoConnect() {
+  try {
+    return localStorage.getItem(AUTO_CONNECT_FLAG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 function encodeBase58(bytes) {
   if (!(bytes instanceof Uint8Array)) {
@@ -139,6 +165,8 @@ async function connectWallet({ silent = false, allowRedirect = false } = {}) {
 
   updateState({ walletPubkey: pubkey });
   await establishSession(pubkey);
+
+  enableAutoConnect();
 }
 
 function handleAccountChange(newPubkey) {
@@ -151,6 +179,7 @@ function handleAccountChange(newPubkey) {
     }
   } else {
     clearSessionToken();
+    disableAutoConnect();
     updateState({ walletPubkey: null, isAuthenticated: false });
   }
 }
@@ -187,14 +216,16 @@ export function initApp() {
 
   if (provider) {
     provider.on?.('accountChanged', handleAccountChange);
-    connectWallet({ silent: true }).catch(() => {
-      // ignore: user not yet trusted or not connected
-    });
+    if (shouldAutoConnect()) {
+      connectWallet({ silent: true }).catch(() => {
+        // ignore: user not yet trusted or not connected
+      });
+    }
   }
 
   window.addEventListener('focus', () => {
     const updated = refreshProvider();
-    if (updated && state.walletPubkey && !state.isAuthenticated) {
+    if (updated && state.walletPubkey && !state.isAuthenticated && shouldAutoConnect()) {
       connectWallet({ silent: true }).catch(() => {});
     }
   });
