@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'https://cdn.jsdelivr.net/npm/uuid@8.3.2/dist/esm-browser/index.js';
 
+console.info('[SOLINK] Local jayson browser client loaded:', import.meta.url);
+
 function generateRequest(method, params, id, options = {}) {
   if (typeof method !== 'string') {
     throw new TypeError(`${method} must be a string`);
