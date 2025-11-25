@@ -947,6 +947,32 @@ function createContactElement(contact) {
   meta.appendChild(nameEl);
   meta.appendChild(previewEl);
 
+  const badgesRow = document.createElement("div");
+  badgesRow.className = "chat-item__badges";
+
+  const secureBadge = document.createElement("span");
+  secureBadge.className = "chip chip--secure";
+  secureBadge.textContent = "E2EE";
+  badgesRow.appendChild(secureBadge);
+
+  if (contact.isSaved) {
+    const savedBadge = document.createElement("span");
+    savedBadge.className = "chip chip--saved";
+    savedBadge.textContent = "Saved";
+    badgesRow.appendChild(savedBadge);
+  }
+
+  if (contact.pinned) {
+    const pinnedBadge = document.createElement("span");
+    pinnedBadge.className = "chip chip--pinned";
+    pinnedBadge.textContent = "Pinned";
+    badgesRow.appendChild(pinnedBadge);
+  }
+
+  if (badgesRow.children.length) {
+    meta.appendChild(badgesRow);
+  }
+
   const aside = document.createElement("div");
   aside.className = "chat-item__aside";
 
