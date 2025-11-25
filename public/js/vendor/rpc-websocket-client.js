@@ -12,188 +12,315 @@ function ensureJson(value) {
 
 let fallbackRequestId = 0;
 
+const defaultBrowserFactory = (url, options = {}) =>
+  new WebSocket(url, options.protocols);
+
 export default class RpcWebSocketClient extends EventEmitter {
-  constructor(url, options = {}, generateRequestId) {
+  constructor(arg1, arg2 = 'ws://localhost:8080', arg3 = {}, arg4) {
     super();
-    this.url = url;
-    this.options = {
-      autoconnect: true,
-      reconnect: true,
-      max_reconnects: 0,
-      reconnect_interval: 1000,
-      protocols: undefined,
-      requestTimeoutMs: 15000,
-      ...options,
-    };
+
+    let factory = arg1;
+    let address = arg2;
+    let options = arg3;
+    let generator = arg4;
+
+    if (typeof factory !== 'function') {
+      generator = arg3;
+      options = typeof arg2 === 'object' && arg2 !== null ? arg2 : {};
+      address = typeof arg1 === 'string' ? arg1 : 'ws://localhost:8080';
+      factory = defaultBrowserFactory;
+    }
+
+    const safeOptions = options || {};
+    const {
+      autoconnect = true,
+      reconnect = true,
+      reconnect_interval = 1000,
+      max_reconnects = 5,
+      requestTimeoutMs = 15000,
+      protocols,
+      ...restOptions
+    } = safeOptions;
+
+    this.webSocketFactory = factory;
+    this.address = address;
+    this.autoconnect = autoconnect;
+    this.reconnect = reconnect;
+    this.reconnectInterval = reconnect_interval;
+    this.maxReconnects = max_reconnects;
+    this.requestTimeoutMs = requestTimeoutMs;
+    this.connectionOptions = { protocols, ...restOptions };
     this.generateRequestId =
-      generateRequestId ||
-      options.generate_request_id ||
-      (() => ++fallbackRequestId);
+      generator || safeOptions.generate_request_id || (() => ++fallbackRequestId);
 
     this.socket = null;
-    this._pending = new Map();
-    this._currentReconnects = 0;
+    this.ready = false;
+    this.queue = {};
+    this.currentReconnects = 0;
+    this.reconnectTimer = undefined;
 
-    if (this.options.autoconnect) {
-      this.connect();
+    if (this.autoconnect) {
+      this._connect(this.address, this.connectionOptions);
     }
   }
 
-  get ready() {
-    return this.socket && this.socket.readyState === WebSocket.OPEN;
+  get readyState() {
+    return this.socket ? this.socket.readyState : WebSocket.CLOSED;
   }
 
   connect() {
-    if (
-      this.socket &&
-      (this.socket.readyState === WebSocket.OPEN ||
-        this.socket.readyState === WebSocket.CONNECTING)
-    ) {
+    if (this.socket) {
       return;
     }
+    this._connect(this.address, this.connectionOptions);
+  }
 
-    const ws = new WebSocket(this.url, this.options.protocols);
-    this.socket = ws;
+  call(method, params = null, timeoutOrOptions, maybeWsOptions) {
+    let timeout = timeoutOrOptions;
+    let wsOptions = maybeWsOptions;
 
-    ws.addEventListener('open', () => {
-      this._currentReconnects = 0;
-      this.emit('open');
-    });
+    if (
+      typeof timeout === 'object' &&
+      timeout !== null &&
+      typeof wsOptions === 'undefined'
+    ) {
+      wsOptions = timeout;
+      timeout = undefined;
+    }
 
-    ws.addEventListener('message', (event) => {
-      this._handleMessage(event.data);
-    });
+    const effectiveTimeout =
+      typeof timeout === 'number' ? timeout : this.requestTimeoutMs;
 
-    ws.addEventListener('error', (event) => {
-      this.emit('error', event);
-    });
-
-    ws.addEventListener('close', (event) => {
-      this.emit('close', event.code, event.reason);
-      this.socket = null;
-      for (const [, { reject }] of this._pending) {
-        reject(new Error('WebSocket closed before response'));
+    return new Promise((resolve, reject) => {
+      if (!this.ready) {
+        reject(new Error('socket not ready'));
+        return;
       }
-      this._pending.clear();
-      this._maybeReconnect();
+
+      const id = this.generateRequestId(method, params);
+      const message = {
+        jsonrpc: '2.0',
+        method,
+        params: params ?? null,
+        id,
+      };
+
+      try {
+        const payload = JSON.stringify(message);
+        if (this.socket.send.length >= 2 && (wsOptions || this.socket.send.length > 1)) {
+          this.socket.send(payload, wsOptions, (error) => {
+            if (error) {
+              reject(error);
+            }
+          });
+        } else {
+          this.socket.send(payload);
+        }
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      const record = {
+        resolve,
+        reject,
+        timeoutHandle: effectiveTimeout
+          ? setTimeout(() => {
+              delete this.queue[id];
+              reject(new Error('reply timeout'));
+            }, effectiveTimeout)
+          : null,
+      };
+
+      this.queue[id] = record;
     });
   }
 
+  login(params) {
+    return this.call('rpc.login', params).then((result) => {
+      if (!result) {
+        throw new Error('authentication failed');
+      }
+      return result;
+    });
+  }
+
+  listMethods() {
+    return this.call('__listMethods');
+  }
+
+  notify(method, params = null) {
+    return new Promise((resolve, reject) => {
+      if (!this.ready) {
+        reject(new Error('socket not ready'));
+        return;
+      }
+      const payload = {
+        jsonrpc: '2.0',
+        method,
+        params: params ?? null,
+      };
+      try {
+        const serialized = JSON.stringify(payload);
+        if (this.socket.send.length >= 1) {
+          this.socket.send(serialized, (error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+          if (this.socket.send.length === 1) {
+            resolve();
+          }
+        } else {
+          this.socket.send(serialized);
+          resolve();
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  subscribe(event) {
+    const list = typeof event === 'string' ? [event] : event;
+    return this.call('rpc.on', list);
+  }
+
+  unsubscribe(event) {
+    const list = typeof event === 'string' ? [event] : event;
+    return this.call('rpc.off', list);
+  }
+
   close(code = 1000, reason) {
-    this.options.reconnect = false;
+    this.reconnect = false;
     if (this.socket) {
       this.socket.close(code, reason);
     }
   }
 
-  call(method, params = [], timeoutMs) {
-    return new Promise((resolve, reject) => {
-      if (!this.ready) {
-        reject(new Error('WebSocket is not open'));
-        return;
-      }
-
-      const id = this.generateRequestId(method, params);
-      const payload = {
-        jsonrpc: '2.0',
-        id,
-        method,
-        params,
-      };
-
-      const timeout =
-        typeof timeoutMs === 'number'
-          ? timeoutMs
-          : this.options.requestTimeoutMs;
-
-      const record = {
-        resolve,
-        reject,
-        timeoutHandle: timeout
-          ? setTimeout(() => {
-              this._pending.delete(id);
-              reject(new Error('reply timeout'));
-            }, timeout)
-          : null,
-      };
-
-      this._pending.set(id, record);
-      this.socket.send(JSON.stringify(payload));
-    });
-  }
-
-  async notify(method, params = []) {
-    if (!this.ready) {
-      throw new Error('WebSocket is not open');
+  _handleIncomingMessage(raw) {
+    let payload = raw;
+    if (payload && typeof payload === 'object' && 'data' in payload) {
+      payload = payload.data;
     }
-    const payload = {
-      jsonrpc: '2.0',
-      method,
-      params,
-    };
-    this.socket.send(JSON.stringify(payload));
-  }
 
-  _handleMessage(raw) {
-    let payload;
+    let message;
     try {
-      payload = JSON.parse(ensureJson(raw));
-    } catch (err) {
-      this.emit('error', err);
+      message = JSON.parse(ensureJson(payload));
+    } catch {
       return;
     }
 
-    if (Array.isArray(payload)) {
-      payload.forEach((entry) => this._handleMessage(JSON.stringify(entry)));
+    if (Array.isArray(message)) {
+      message.forEach((entry) => this._handleIncomingMessage({ data: entry }));
       return;
     }
 
-    if (Object.prototype.hasOwnProperty.call(payload, 'id')) {
-      const handler = this._pending.get(payload.id);
-      if (!handler) {
+    if (message.notification && this.listeners(message.notification).length) {
+      if (!Object.keys(message.params || {}).length) {
+        this.emit(message.notification);
         return;
       }
-      this._pending.delete(payload.id);
-      if (handler.timeoutHandle) {
-        clearTimeout(handler.timeoutHandle);
-      }
-      if (payload.error) {
-        handler.reject(payload.error);
+      const args = [message.notification];
+      if (Array.isArray(message.params)) {
+        args.push(...message.params);
       } else {
-        handler.resolve(payload.result);
+        args.push(message.params);
       }
+      Promise.resolve().then(() => this.emit.apply(this, args));
       return;
     }
 
-    if (payload.method) {
-      if (
-        payload.params &&
-        Object.prototype.hasOwnProperty.call(payload.params, 'subscription')
-      ) {
-        this.emit(
-          payload.method,
-          payload.params.result,
-          payload.params.subscription,
-        );
-      } else {
-        this.emit(payload.method, payload.params);
+    if (Object.prototype.hasOwnProperty.call(this.queue, message.id)) {
+      const record = this.queue[message.id];
+      if (record.timeoutHandle) {
+        clearTimeout(record.timeoutHandle);
       }
+      if (message.error) {
+        record.reject(message.error);
+      } else {
+        record.resolve(message.result);
+      }
+      delete this.queue[message.id];
+      return;
+    }
+
+    if (message.method && message.params) {
+      this.emit(message.method, message.params);
     }
   }
 
-  _maybeReconnect() {
+  _connect(address, options) {
+    clearTimeout(this.reconnectTimer);
+    const socket = this.webSocketFactory(address, options);
+    this.socket = socket;
+
+    const onOpen = () => {
+      this.ready = true;
+      this.currentReconnects = 0;
+      this.emit('open');
+    };
+
+    const onMessage = (event) => this._handleIncomingMessage(event);
+
+    const onError = (event) => {
+      this.emit('error', event);
+      // For browser WebSockets, errors usually precede a close event,
+      // so proactively terminate to avoid lingering sockets and noise.
+      if (this.socket && this.socket.readyState !== WebSocket.CLOSED) {
+        this.socket.close();
+      }
+    };
+
+    const onClose = (event = {}) => {
+      const { code = 1000, reason = '' } = event;
+      if (this.ready) {
+        setTimeout(() => this.emit('close', code, reason), 0);
+      }
+      this.ready = false;
+      this.socket = null;
+
+      Object.keys(this.queue).forEach((key) => {
+        const record = this.queue[key];
+        if (record.timeoutHandle) {
+          clearTimeout(record.timeoutHandle);
+        }
+        record.reject(new Error('socket closed'));
+        delete this.queue[key];
+      });
+
+      if (code !== 1000) {
+        this._scheduleReconnect(address, options);
+      }
+    };
+
+    if (typeof socket.addEventListener === 'function') {
+      socket.addEventListener('open', onOpen);
+      socket.addEventListener('message', onMessage);
+      socket.addEventListener('error', onError);
+      socket.addEventListener('close', onClose);
+    } else {
+      socket.onopen = onOpen;
+      socket.onmessage = onMessage;
+      socket.onerror = onError;
+      socket.onclose = onClose;
+    }
+  }
+
+  _scheduleReconnect(address, options) {
     if (
-      !this.options.reconnect ||
-      (this.options.max_reconnects &&
-        this._currentReconnects >= this.options.max_reconnects)
+      !this.reconnect ||
+      (this.maxReconnects &&
+        this.currentReconnects >= this.maxReconnects)
     ) {
       return;
     }
 
-    this._currentReconnects += 1;
-    setTimeout(() => {
-      this.connect();
-    }, this.options.reconnect_interval);
+    this.currentReconnects += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this._connect(address, options);
+    }, this.reconnectInterval);
   }
 }
-

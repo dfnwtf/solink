@@ -53,8 +53,16 @@ const MAX_MESSAGE_LENGTH = 2000;
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const NICKNAME_REGEX = /^[a-z0-9_.-]{3,24}$/;
 const PROFILE_LOOKUP_COOLDOWN_MS = 5 * 60 * 1000;
-const SOLANA_RPC_URL = window.SOLINK_RPC_URL || "https://api.mainnet-beta.solana.com";
-const solanaConnection = new Connection(SOLANA_RPC_URL, "confirmed");
+const hasWindow = typeof window !== 'undefined';
+const isLocalhost =
+  hasWindow && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const DEFAULT_SOLANA_RPC = isLocalhost
+  ? 'https://api.mainnet-beta.solana.com'
+  : hasWindow
+    ? new URL('/api/solana', window.location.origin).toString()
+    : 'https://api.mainnet-beta.solana.com';
+const SOLANA_RPC_URL = window.SOLINK_RPC_URL || DEFAULT_SOLANA_RPC;
+const solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
 window.Buffer = window.Buffer || Buffer;
 
 const state = {
