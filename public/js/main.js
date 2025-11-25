@@ -202,6 +202,10 @@ export function isAuthenticated() {
   return state.isAuthenticated && Boolean(getSessionToken());
 }
 
+export function getProviderInstance() {
+  return refreshProvider();
+}
+
 export async function requestConnect() {
   try {
     await connectWallet({ allowRedirect: true });
