@@ -1,60 +1,60 @@
 # SOLink – Secure Wallet-to-Wallet Messenger
 
-SOLink — современный мессенджер c акцентом на приватность. Клиент и Cloudflare Worker полностью переписаны под новый UX, трёхколоночный макет и сквозное шифрование сообщений.
+SOLink is a privacy-focused messenger built around Solana wallets. Both the client and the Cloudflare Worker were rewritten to deliver a modern three-column UI and full end-to-end encryption.
 
-## Основные возможности
+## Highlights
 
-- **Wallet-first UX.** Авторизация через Phantom (или совместимый Solana-кошелёк). Состояние кошелька управляет рабочим пространством и локальной БД.
-- **Durable Object очередь.** Сообщения попадают в Durable Object, подтверждаются через `/messages/ack`, поэтому доставка «at least once» гарантирована.
-- **End-to-end шифрование.**
-  - На клиенте генерируется пара X25519 (TweetNaCl), публичный ключ публикуется в профиле.
-  - При первом контакте вычисляется общий секрет (Diffie–Hellman) и кэшируется в IndexedDB.
-  - `send` шифрует текст, воркер хранит только ciphertext, расшифровка происходит локально.
-- **Современный фронтенд.** Dark UI, трёхколоночный макет (навигация → список чатов → диалог + инфо-панель), адаптивная верстка.
-- **IndexedDB Workspaces.** Для каждого кошелька создаётся свой namespace (`solink-db-wallet-...`). При смене кошелька UI сбрасывается и подгружает соответствующие данные.
-- **Cloudflare KV + Worker.** Профили, никнеймы, публичные ключи и rate limit обрабатываются в Worker.
+- **Wallet-first UX.** Phantom (or any compatible Solana wallet) acts as the single identity layer. Workspace and local IndexedDB are tied to the connected wallet.
+- **Durable Object queue.** Messages land in a Cloudflare Durable Object and are acknowledged through `/messages/ack`, guaranteeing “at least once” delivery.
+- **End-to-end encryption.**
+  - The client generates an X25519 key pair (TweetNaCl) and publishes the public key in the profile.
+  - A shared secret (Diffie–Hellman) is derived and cached per contact in IndexedDB.
+  - `send` encrypts the payload, the worker stores ciphertext only, and decryption happens solely on the client.
+- **Modern frontend.** Dark theme, navigation → chat list → conversation + info panel layout, responsive styles.
+- **IndexedDB workspaces.** Each wallet gets its own namespace (`solink-db-wallet-...`). Switching wallets resets the UI and loads the corresponding data.
+- **Cloudflare KV + Worker.** Profiles, nicknames, public keys and rate limiting are handled server-side.
 
-## Стек
+## Tech Stack
 
-| Компонент | Технологии |
-|-----------|------------|
-| Фронтенд  | HTML/CSS/Vanilla JS, TweetNaCl, IndexedDB |
-| Бэкенд    | Cloudflare Workers + KV + Durable Objects |
-| Доставка  | Long-poll (`/inbox/poll?wait=15000`) + ack (`/messages/ack`) |
+| Layer      | Technologies |
+|-----------|--------------|
+| Frontend  | HTML/CSS, Vanilla JS, TweetNaCl, IndexedDB |
+| Backend   | Cloudflare Workers, KV, Durable Objects |
+| Delivery  | Long-poll (`/inbox/poll?wait=15000`) + ACK (`/messages/ack`) |
 
-## Быстрый старт
+## Quick Start
 
-1. Установи зависимости для Wrangler (локально или через `npm install wrangler`).
-2. Настрой `.env`/`wrangler secret` для токенов (если требуется).
-3. Локальный запуск фронта — просто открой `public/app.html`.
-4. Для dev-бэкенда: `wrangler dev --local`.
-5. Продакшн: `wrangler deploy`.
+1. Install Wrangler (globally or via `npm install wrangler`).
+2. Configure secrets via `.env`/`wrangler secret` if needed.
+3. For a local UI preview just open `public/app.html`.
+4. Run backend locally with `wrangler dev --local`.
+5. Deploy to production using `wrangler deploy`.
 
-## Безопасность
+## Security Notes
 
-- Приватные ключи кошелька никогда не покидают Phantom.
-- Ключи шифрования хранятся локально в IndexedDB, публикация — только публичного ключа.
-- Worker хранит только ciphertext + метаданные; plaintext нигде не логируется и не кэшируется.
+- Phantom never exposes private keys; the app operates with signatures only.
+- Encryption keys live in the browser’s IndexedDB; only public keys are uploaded.
+- The worker stores ciphertext + metadata, plaintext is never logged or cached server-side.
 
-## Структура репозитория
+## Repository Layout
 
 ```
-public/        # фронтенд
+public/        # frontend assets
 worker/        # Cloudflare Worker + Durable Object
-docs/          # дизайн-концепт и заметки
-wrangler.toml  # конфиг развертывания
+docs/          # design notes
+wrangler.toml  # deployment config
 ```
 
 ## Roadmap
 
-- [x] Новый UI/UX
-- [x] Durable Object очередь + ack
-- [x] Глобальные @nicknames
-- [x] End-to-end шифрование
-- [ ] Дизайн-полировка и onboarding-анимация
-- [ ] Нативные push-уведомления
+- [x] New UI/UX
+- [x] Durable Object queue + ACK
+- [x] Global @nicknames
+- [x] End-to-end encryption
+- [ ] Design polish & onboarding animation
+- [ ] Native push notifications
 
 ---
 
-Если хочется повторить локально: подтяни репозиторий, запусти `wrangler dev` и открой `public/app.html?v=dev`. Все ключи/секреты задаются через Phantom/IndexedDB, поэтому репозиторий безопасен для публичного размещения.
+To replicate locally: clone the repo, run `wrangler dev`, and open `public/app.html?v=dev`. All secrets are tied to Phantom/IndexedDB, so the repo is safe to keep public.
 
