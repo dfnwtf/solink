@@ -1,18 +1,17 @@
 # SOLink – Secure Wallet-to-Wallet Messenger
 
-SOLink is a privacy-focused messenger built around Solana wallets. Both the client and the Cloudflare Worker were rewritten to deliver a modern three-column UI and full end-to-end encryption.
+SOLink is a privacy-first messenger built around Solana wallets. The UI, queueing layer, and encryption pipeline are engineered so that only wallet owners can read their conversations—no centralized server ever sees plaintext.
 
 ## Highlights
 
-- **Wallet-first UX.** Phantom (or any compatible Solana wallet) acts as the single identity layer. Workspace and local IndexedDB are tied to the connected wallet.
-- **Durable Object queue.** Messages land in a Cloudflare Durable Object and are acknowledged through `/messages/ack`, guaranteeing “at least once” delivery.
+- **Wallet-native UX.** Phantom (or any Solana wallet) doubles as identity and authentication. Internal IndexedDB namespaces (`solink-db-wallet-...`) isolate conversations per wallet.
+- **Durable Object queue.** Every outgoing message lands in a Cloudflare DO, waits for `/messages/ack`, and is removed atomically. Even if a reader reloads mid-session, the queue replays undeciphered ciphertext until it’s acknowledged.
 - **End-to-end encryption.**
-  - The client generates an X25519 key pair (TweetNaCl) and publishes the public key in the profile.
-  - A shared secret (Diffie–Hellman) is derived and cached per contact in IndexedDB.
-  - `send` encrypts the payload, the worker stores ciphertext only, and decryption happens solely on the client.
-- **Modern frontend.** Dark theme, navigation → chat list → conversation + info panel layout, responsive styles.
-- **IndexedDB workspaces.** Each wallet gets its own namespace (`solink-db-wallet-...`). Switching wallets resets the UI and loads the corresponding data.
-- **Cloudflare KV + Worker.** Profiles, nicknames, public keys and rate limiting are handled server-side.
+  - Clients generate X25519 pairs (TweetNaCl) and publish only the public key.
+  - For each contact we compute a shared secret (Diffie–Hellman) and cache it in IndexedDB.
+  - Payloads are encrypted with XSalsa20-Poly1305 before they ever touch the worker. Decryption happens purely in the browser.
+- **Modern frontend.** Dark three-column layout (nav → chats → conversation & info panel), responsive CSS, and stateful search/favorites.
+- **Cloudflare Worker + KV.** Profiles, nicknames, encryption keys, and rate limits live in KV; the worker simply brokers ciphertext between wallets.
 
 ## Tech Stack
 
@@ -24,31 +23,54 @@ SOLink is a privacy-focused messenger built around Solana wallets. Both the clie
 
 ## Quick Start
 
-### UI Only
 1. Clone or download the repository.
 2. Open `public/app.html` in your browser.
-3. Connect Phantom and start chatting (messages will still be proxied through the deployed worker).
-
-### Backend Contributors (Optional)
-If you want to run the Cloudflare Worker yourself:
-1. Install [Wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/).
-2. Configure KV/Durable Object bindings in `wrangler.toml`.
-3. `wrangler dev --local` to emulate the worker, `wrangler deploy` to ship it.
+3. Connect Phantom — encryption keys are generated on the fly and messages are routed through the secure queue automatically.
 
 ## Security Notes
 
-- Phantom never exposes private keys; the app operates with signatures only.
-- Encryption keys live in the browser’s IndexedDB; only public keys are uploaded.
-- The worker stores ciphertext + metadata, plaintext is never logged or cached server-side.
+- Phantom never exposes private keys; the dApp requests only signatures.
+- Encryption keys are generated client-side and stored in IndexedDB (`solink-db-wallet-*`).
+- Only public keys are uploaded. Worker receives ciphertext + nonce + metadata.
+- Durable Object acts as a sealed queue: messages persist until `/messages/ack` confirms delivery.
+- Long-poll prevents replay attacks: each poll clears the queue atomically, so ciphertext can’t reappear once acked.
+
+```js
+// simplified send flow (client-side)
+const secret = await ensureSessionSecret(contactPubkey);
+const encrypted = secret && encryptWithSecret(secret, plaintext);
+await sendMessage({
+  to: contactPubkey,
+  text: encrypted ? encrypted.ciphertext : plaintext,
+  nonce: encrypted?.nonce,
+  version: encrypted?.version,
+  timestamp: Date.now(),
+});
+```
+
+```js
+// worker/worker.js (store snippet)
+const message = {
+  id: crypto.randomUUID(),
+  from: senderPubkey,
+  to: recipientPubkey,
+  text: sanitizedText,          // optional fallback
+  ciphertext: sanitizedCiphertext,
+  nonce: sanitizedNonce,
+  encryptionVersion,
+  timestamp: Date.now(),
+};
+await inboxStore(env, recipientPubkey, message);
+```
 
 ## Repository Layout
 
-```
-public/        # frontend assets
-worker/        # Cloudflare Worker + Durable Object
-docs/          # design notes
-wrangler.toml  # deployment config
-```
+| Path   | Description                              |
+|--------|------------------------------------------|
+| `public/` | Frontend assets (HTML/CSS/JS, UI)         |
+| `worker/` | Cloudflare Worker & Durable Object queue |
+| `docs/`   | Design notes & UX drafts                 |
+| `wrangler.toml` | Deployment config (bindings, routes)    |
 
 ## Roadmap
 
