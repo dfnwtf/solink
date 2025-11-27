@@ -119,6 +119,12 @@ export async function addMessage(message) {
   return payload;
 }
 
+export async function deleteMessage(id) {
+  if (!id) return false;
+  await withStore(MESSAGES_STORE, 'readwrite', (store) => store.delete(id));
+  return true;
+}
+
 export async function setMessageStatus(id, status) {
   return withStore(MESSAGES_STORE, 'readwrite', (store) => {
     const request = store.get(id);
@@ -278,4 +284,85 @@ export async function saveSessionSecret(pubkey, secret) {
   };
   await withStore(ENCRYPTION_STORE, 'readwrite', (store) => store.put(payload));
   return payload;
+}
+
+async function getAllRecords(storeName) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    const request = store.getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function putRecords(storeName, records = []) {
+  if (!Array.isArray(records) || !records.length) return;
+  await withStore(storeName, 'readwrite', (store) => {
+    records.forEach((record) => {
+      if (record && typeof record === 'object') {
+        store.put(record);
+      }
+    });
+  });
+}
+
+export async function exportLocalData() {
+  const [contacts, messages, encryptionStore] = await Promise.all([
+    getContacts(),
+    getAllRecords(MESSAGES_STORE),
+    getAllRecords(ENCRYPTION_STORE),
+  ]);
+  const profile = await getProfile();
+  return {
+    version: 1,
+    exportedAt: Date.now(),
+    contacts,
+    messages,
+    profile,
+    encryptionStore,
+  };
+}
+
+export async function importLocalData(dump = {}) {
+  if (!dump || typeof dump !== 'object') {
+    throw new Error('Import payload is invalid');
+  }
+  await clearDatabase();
+
+  if (Array.isArray(dump.contacts)) {
+    for (const contact of dump.contacts) {
+      if (contact?.pubkey) {
+        await upsertContact(contact);
+      }
+    }
+  }
+
+  if (Array.isArray(dump.messages)) {
+    for (const message of dump.messages) {
+      if (message?.id && message?.contactKey) {
+        await addMessage(message);
+      }
+    }
+  }
+
+  if (dump.profile) {
+    await saveProfile(dump.profile);
+  }
+
+  if (Array.isArray(dump.encryptionStore)) {
+    await putRecords(ENCRYPTION_STORE, dump.encryptionStore);
+  }
+
+  return {
+    contacts: dump.contacts?.length || 0,
+    messages: dump.messages?.length || 0,
+    encryption: dump.encryptionStore?.length || 0,
+  };
+}
+
+export async function deleteSessionSecret(pubkey) {
+  if (!pubkey) return;
+  await withStore(ENCRYPTION_STORE, 'readwrite', (store) => store.delete(`session:${pubkey}`));
 }

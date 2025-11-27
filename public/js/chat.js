@@ -16,6 +16,7 @@ import {
   isAuthenticated,
   getCurrentRoute,
   getProviderInstance,
+  logout as requestLogout,
 } from "./main.js";
 import {
   sendMessage,
@@ -26,6 +27,7 @@ import {
   fetchProfileByPubkey,
   ackMessages,
   updateEncryptionKey,
+  getSessionToken,
 } from "./api.js";
 import {
   upsertContact,
@@ -33,6 +35,7 @@ import {
   getContacts,
   getMessagesForContact,
   addMessage,
+  deleteMessage as removeMessageFromStore,
   updateContact,
   setMessageStatus,
   migrateContactKey,
@@ -45,6 +48,9 @@ import {
   saveEncryptionKeys,
   getSessionSecret,
   saveSessionSecret,
+  deleteSessionSecret as removePersistedSessionSecret,
+  exportLocalData,
+  importLocalData,
 } from "./db.js";
 
 const POLL_LONG_WAIT_MS = 15000;
@@ -62,9 +68,39 @@ const DEFAULT_SOLANA_RPC = isLocalhost
     : "https://api.mainnet-beta.solana.com";
 const PAYMENT_SYSTEM_PREFIX = "__SOLINK_PAYMENT__";
 const SOLANA_EXPLORER_TX = "https://explorer.solana.com/tx/";
+const REPLY_PREFIX = "__SOLINK_REPLY__";
+const REPLY_DELIMITER = "::";
+const REPLY_PREVIEW_LIMIT = 140;
+const FORWARD_PREFIX = "__SOLINK_FORWARD__";
+const FORWARD_DELIMITER = "::";
+const FORWARD_PREVIEW_LIMIT = 140;
+const SETTINGS_STORAGE_KEY = "solink_settings_v1";
+const DEFAULT_SETTINGS = Object.freeze({
+  soundEnabled: true,
+});
 const SOLANA_RPC_URL = window.SOLINK_RPC_URL || DEFAULT_SOLANA_RPC;
 const solanaConnection = new Connection(SOLANA_RPC_URL, "confirmed");
 window.Buffer = window.Buffer || Buffer;
+
+function loadSettingsFromStorage() {
+  if (!hasWindow) {
+    return { ...DEFAULT_SETTINGS };
+  }
+  try {
+    const raw = window.localStorage?.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return { ...DEFAULT_SETTINGS };
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return { ...DEFAULT_SETTINGS };
+    }
+    return { ...DEFAULT_SETTINGS, ...parsed };
+  } catch (error) {
+    console.warn("Failed to load settings", error);
+    return { ...DEFAULT_SETTINGS };
+  }
+}
 
 const state = {
   profile: null,
@@ -81,6 +117,13 @@ const state = {
   encryptionKeys: null,
   sessionSecrets: new Map(),
   remoteEncryptionKeys: new Map(),
+  replyContext: null,
+  forwardContext: {
+    source: null,
+    filter: "",
+    selectedTarget: null,
+  },
+  settings: loadSettingsFromStorage(),
 };
 
 const ui = {
@@ -98,6 +141,10 @@ let pollLoopPromise = null;
 let pollAbortController = null;
 let emojiPicker = null;
 let isPaymentSubmitting = false;
+const messageMenuState = {
+  messageId: null,
+  direction: "in",
+};
 
 function sanitizeNamespace(value) {
   if (!value) return "guest";
@@ -125,6 +172,9 @@ async function loadWorkspace(walletPubkey) {
   contactProfileLookups.clear();
   contactProfileCooldown.clear();
   clearChatView();
+  clearReplyContext();
+  hideForwardModal();
+  state.forwardContext = { source: null, filter: "", selectedTarget: null };
   updatePaymentRecipient(null);
   renderContactList();
   await initializeProfile();
@@ -154,6 +204,12 @@ function cacheDom() {
   ui.profilePanelAvatar = document.querySelector("[data-role=\"profile-panel-avatar\"]");
   ui.profilePanelName = document.querySelector("[data-role=\"profile-panel-name\"]");
   ui.profilePanelWallet = document.querySelector("[data-role=\"profile-panel-wallet\"]");
+  ui.settingsPanel = document.querySelector("[data-role=\"settings-panel\"]");
+  ui.settingsSoundToggle = document.querySelector("[data-role=\"settings-sound-toggle\"]");
+  ui.exportDataButton = document.querySelector("[data-action=\"export-data\"]");
+  ui.importDataButton = document.querySelector("[data-action=\"import-data\"]");
+  ui.importFileInput = document.querySelector("[data-role=\"import-file\"]");
+  ui.logoutButton = document.querySelector("[data-action=\"logout\"]");
 
   ui.statusIndicator = document.querySelector("[data-role=\"connection-indicator\"]");
   ui.statusLabel = document.querySelector("[data-role=\"status\"]");
@@ -171,6 +227,22 @@ function cacheDom() {
   ui.sendButton = document.querySelector("[data-action=\"send-message\"]");
   ui.emojiButton = document.querySelector("[data-action=\"toggle-emoji\"]");
   ui.composer = document.querySelector("[data-role=\"composer\"]");
+  ui.replyPreview = document.querySelector("[data-role=\"reply-preview\"]");
+  ui.replyAuthor = document.querySelector("[data-role=\"reply-author\"]");
+  ui.replyText = document.querySelector("[data-role=\"reply-text\"]");
+  ui.replyCancel = document.querySelector("[data-action=\"cancel-reply\"]");
+  ui.messageMenu = document.querySelector("[data-role=\"message-menu\"]");
+  ui.messageMenuReply = document.querySelector("[data-action=\"message-reply\"]");
+  ui.messageMenuForward = document.querySelector("[data-action=\"message-forward\"]");
+  ui.messageMenuDelete = document.querySelector("[data-action=\"message-delete\"]");
+  ui.forwardModal = document.querySelector("[data-role=\"forward-modal\"]");
+  ui.forwardSearch = document.querySelector("[data-role=\"forward-search\"]");
+  ui.forwardList = document.querySelector("[data-role=\"forward-list\"]");
+  ui.forwardSubtitle = document.querySelector("[data-role=\"forward-subtitle\"]");
+  ui.forwardCloseButtons = Array.from(document.querySelectorAll("[data-action=\"close-forward\"]"));
+  ui.forwardConfirmButton = document.querySelector("[data-action=\"confirm-forward\"]");
+  ui.forwardSelection = document.querySelector("[data-role=\"forward-selection\"]");
+  ui.forwardSelectionName = document.querySelector("[data-role=\"forward-selection-name\"]");
 
   ui.infoPanel = document.querySelector("[data-role=\"info-panel\"]");
   ui.infoAvatar = document.querySelector("[data-role=\"info-avatar\"]");
@@ -202,7 +274,34 @@ function cacheDom() {
   ui.notificationAudio = document.querySelector("[data-role=\"notification-sound\"]");
   ui.closeChatButton = document.querySelector("[data-action=\"close-chat\"]");
 
+  syncSettingsUI();
   updatePaymentControls();
+}
+
+function persistSettings() {
+  if (!hasWindow) {
+    return;
+  }
+  try {
+    window.localStorage?.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+  } catch (error) {
+    console.warn("Failed to persist settings", error);
+  }
+}
+
+function updateSettings(partial) {
+  state.settings = {
+    ...state.settings,
+    ...partial,
+  };
+  persistSettings();
+  syncSettingsUI();
+}
+
+function syncSettingsUI() {
+  if (ui.settingsSoundToggle) {
+    ui.settingsSoundToggle.checked = Boolean(state.settings?.soundEnabled);
+  }
 }
 
 function setActiveNav(target) {
@@ -214,12 +313,17 @@ function setActiveNav(target) {
 
 function setSidebarView(view) {
   state.sidebarView = view;
+  const showList = view === "list";
   const showProfile = view === "profile";
+  const showSettings = view === "settings";
   if (ui.sidebarDefault) {
-    ui.sidebarDefault.hidden = showProfile;
+    ui.sidebarDefault.hidden = !showList;
   }
   if (ui.profileSettingsPanel) {
     ui.profileSettingsPanel.hidden = !showProfile;
+  }
+  if (ui.settingsPanel) {
+    ui.settingsPanel.hidden = !showSettings;
   }
 }
 
@@ -236,6 +340,12 @@ function openProfileSettingsView() {
   }
 }
 
+function openSettingsView() {
+  setActiveNav("settings");
+  setSidebarView("settings");
+  syncSettingsUI();
+}
+
 function bindEvents() {
   ui.navButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -246,7 +356,7 @@ function bindEvents() {
         return;
       }
       if (target === "settings") {
-        showToast("Coming soon");
+        openSettingsView();
         return;
       }
       if (state.sidebarView !== "list") {
@@ -273,7 +383,14 @@ function bindEvents() {
     });
   };
 
-  ui.navReconnect?.addEventListener("click", handleConnectClick);
+  const handleReconnectClick = () => {
+    requestConnect({ forceReload: true }).catch((error) => {
+      console.warn("Reconnect error", error);
+      showToast("Wallet connection failed");
+    });
+  };
+
+  ui.navReconnect?.addEventListener("click", handleReconnectClick);
   ui.overlayConnectButton?.addEventListener("click", handleConnectClick);
 
   ui.searchForm?.addEventListener("submit", async (event) => {
@@ -291,9 +408,14 @@ function bindEvents() {
     renderMessages(state.activeContactKey);
   });
 
-  ui.newChatButton?.addEventListener("click", () => {
-    showToast("Type @nickname or paste a public key to start a chat");
-    ui.searchInput?.focus();
+  ui.newChatButton?.addEventListener("click", async () => {
+    const query = ui.searchInput?.value?.trim();
+    if (!query) {
+      showToast("Enter @nickname or a valid public key");
+      ui.searchInput?.focus();
+      return;
+    }
+    await handleSearchSubmit();
   });
 
   ui.copyOnboardingLink?.addEventListener("click", () => {
@@ -376,6 +498,106 @@ function bindEvents() {
     await handleSendMessage(text);
   });
 
+  ui.messageTimeline?.addEventListener("contextmenu", handleTimelineContextMenu);
+  ui.messageTimeline?.addEventListener("scroll", hideMessageContextMenu);
+
+  ui.replyCancel?.addEventListener("click", (event) => {
+    event.preventDefault();
+    clearReplyContext();
+  });
+
+  ui.messageMenuReply?.addEventListener("click", () => {
+    const targetId = messageMenuState.messageId;
+    hideMessageContextMenu();
+    if (targetId) {
+      startReplyToMessage(targetId);
+    }
+  });
+
+  ui.messageMenuForward?.addEventListener("click", () => {
+    const targetId = messageMenuState.messageId;
+    const currentDirection = messageMenuState.direction;
+    hideMessageContextMenu();
+    if (targetId) {
+      showForwardModal(targetId, currentDirection);
+    }
+  });
+
+  ui.messageMenuDelete?.addEventListener("click", () => {
+    const targetId = messageMenuState.messageId;
+    hideMessageContextMenu();
+    if (targetId) {
+      handleDeleteMessage(targetId);
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!ui.messageMenu || ui.messageMenu.hidden) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("[data-role=\"message-menu\"]")) {
+      return;
+    }
+    hideMessageContextMenu();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hideMessageContextMenu();
+      hideForwardModal();
+      if (state.replyContext) {
+        clearReplyContext();
+      }
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    hideMessageContextMenu();
+    hideForwardModal();
+  });
+  document.addEventListener("scroll", () => {
+    hideMessageContextMenu();
+    hideForwardModal();
+  }, true);
+
+  ui.forwardCloseButtons?.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      hideForwardModal();
+    });
+  });
+
+  ui.forwardModal?.addEventListener("click", (event) => {
+    if (event.target === ui.forwardModal) {
+      hideForwardModal();
+    }
+  });
+
+  ui.forwardSearch?.addEventListener("input", (event) => {
+    state.forwardContext.filter = event.target.value || "";
+    renderForwardList();
+  });
+
+  ui.forwardList?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest("[data-forward-target]");
+    if (!button) return;
+    const { forwardTarget } = button.dataset;
+    if (forwardTarget) {
+      handleForwardRecipientSelect(forwardTarget);
+    }
+  });
+
+  ui.forwardConfirmButton?.addEventListener("click", async () => {
+    const record = state.forwardContext.source;
+    const target = state.forwardContext.selectedTarget;
+    if (!record || !target) return;
+    hideForwardModal();
+    await forwardMessageToContact(record, target);
+    state.forwardContext.selectedTarget = null;
+    updateForwardSelectionUI();
+  });
+
   ui.infoLocalName?.addEventListener("change", async (event) => {
     if (!state.activeContactKey) return;
     const value = event.target.value.trim();
@@ -395,6 +617,18 @@ function bindEvents() {
     event.preventDefault();
     await handleNicknameSubmit(ui.profileSettingsInput, ui.profileSettingsHint);
   });
+
+  ui.settingsSoundToggle?.addEventListener("change", (event) => {
+    updateSettings({ soundEnabled: event.target.checked });
+  });
+
+  ui.logoutButton?.addEventListener("click", handleLogoutClick);
+
+  ui.exportDataButton?.addEventListener("click", handleExportData);
+  ui.importDataButton?.addEventListener("click", () => {
+    ui.importFileInput?.click();
+  });
+  ui.importFileInput?.addEventListener("change", handleImportFileChange);
 
   ui.finishOnboarding?.addEventListener("click", hideOnboarding);
   ui.closeOnboarding?.addEventListener("click", hideOnboarding);
@@ -426,7 +660,19 @@ function copyToClipboard(value, successMessage) {
 }
 
 function playNotificationSound() {
-  ui.notificationAudio?.play().catch(() => {});
+  if (!state.settings?.soundEnabled) {
+    return;
+  }
+  const audio = ui.notificationAudio;
+  if (!audio) {
+    return;
+  }
+  try {
+    audio.currentTime = 0;
+  } catch (error) {
+    // Ignore if resetting currentTime fails (e.g., not yet loaded)
+  }
+  audio.play().catch(() => {});
 }
 
 function ensureStatusElements() {
@@ -453,21 +699,31 @@ function updateStatusLabel(appState, inlineMessage) {
     return;
   }
 
-  if (!appState?.provider) {
+  const sessionValid = Boolean(getSessionToken());
+
+  if (!sessionValid) {
+    setTextContent(ui.statusLabel, "Session expired");
+    ui.statusIndicator?.classList.remove("is-online");
+    ui.statusIndicator?.classList.add("is-offline");
+  } else if (!appState?.provider && !appState?.walletPubkey) {
     setTextContent(
       ui.statusLabel,
       appState?.isMobile ? "Tap Connect to open Phantom" : "Install Phantom wallet to continue",
     );
     ui.statusIndicator?.classList.remove("is-online");
+    ui.statusIndicator?.classList.add("is-offline");
   } else if (!appState.walletPubkey) {
     setTextContent(ui.statusLabel, "Wallet disconnected");
     ui.statusIndicator?.classList.remove("is-online");
+    ui.statusIndicator?.classList.add("is-offline");
   } else if (!appState.isAuthenticated) {
     setTextContent(ui.statusLabel, "Authenticating...");
     ui.statusIndicator?.classList.remove("is-online");
+    ui.statusIndicator?.classList.add("is-offline");
   } else {
     setTextContent(ui.statusLabel, "Connected");
     ui.statusIndicator?.classList.add("is-online");
+    ui.statusIndicator?.classList.remove("is-offline");
   }
 }
 
@@ -566,6 +822,14 @@ function getContactDisplayName(pubkey, fallbackShort = true) {
     return contact.displayName;
   }
   return fallbackShort ? shortenPubkey(pubkey, 6) : pubkey;
+}
+
+function getContactAvatarLabel(contact) {
+  if (!contact) return "";
+  if (contact.localName) return contact.localName;
+  if (contact.displayName) return contact.displayName;
+  if (contact.nickname) return `@${contact.nickname}`;
+  return contact.pubkey || "";
 }
 
 function getSelfDisplayName() {
@@ -735,17 +999,24 @@ async function ensureRemoteEncryptionKey(pubkey) {
   return fetched || "";
 }
 
-async function ensureSessionSecret(pubkey) {
+async function ensureSessionSecret(pubkey, options = {}) {
   if (!pubkey) return null;
-  if (state.sessionSecrets.has(pubkey)) {
+  const force = Boolean(options.force);
+  if (!force && state.sessionSecrets.has(pubkey)) {
     return state.sessionSecrets.get(pubkey);
   }
-  const cached = await getSessionSecret(pubkey);
-  if (cached?.secret) {
-    state.sessionSecrets.set(pubkey, cached.secret);
-    return cached.secret;
+  if (!force) {
+    const cached = await getSessionSecret(pubkey);
+    if (cached?.secret) {
+      state.sessionSecrets.set(pubkey, cached.secret);
+      return cached.secret;
+    }
   }
-  const remoteKey = await ensureRemoteEncryptionKey(pubkey);
+  const hintKey = options?.remoteKeyHint || options?.remoteKey;
+  if (hintKey) {
+    rememberRemoteEncryptionKey(pubkey, hintKey);
+  }
+  const remoteKey = hintKey || (await ensureRemoteEncryptionKey(pubkey));
   if (!remoteKey) {
     return null;
   }
@@ -764,18 +1035,46 @@ async function ensureSessionSecret(pubkey) {
   }
 }
 
+async function resetSessionSecret(pubkey) {
+  if (!pubkey) return;
+  state.sessionSecrets.delete(pubkey);
+  await removePersistedSessionSecret(pubkey);
+}
+
 function generateAvatarGradient(seed) {
   const hash = hashCode(seed || "solink");
   const hue = Math.abs(hash % 360);
   return `linear-gradient(135deg, hsl(${hue} 70% 62%), hsl(${(hue + 36) % 360} 70% 55%))`;
 }
 
-function setAvatar(element, seed, size = 48) {
+function extractAvatarInitial(value) {
+  if (!value) return "";
+  const normalized = String(value).trim().replace(/^@+/, "");
+  if (!normalized) return "";
+  for (const char of normalized) {
+    if (!char || char === "-" || char === "_" || char === "." || char === " ") {
+      continue;
+    }
+    if (char.toLowerCase() !== char.toUpperCase()) {
+      return char.toUpperCase();
+    }
+    if (!Number.isNaN(Number(char))) {
+      return char;
+    }
+    return char.toUpperCase();
+  }
+  return normalized[0].toUpperCase();
+}
+
+function setAvatar(element, seed, size = 48, label = "") {
   if (!element) return;
   element.style.width = `${size}px`;
   element.style.height = `${size}px`;
   element.style.borderRadius = `${size < 60 ? 16 : 20}px`;
   element.style.background = generateAvatarGradient(seed);
+  const initial = extractAvatarInitial(label) || extractAvatarInitial(seed) || "";
+  element.textContent = initial;
+  element.style.fontSize = `${Math.max(16, Math.round(size * 0.42))}px`;
 }
 
 function autoResizeTextarea(element) {
@@ -1015,6 +1314,10 @@ function renderContactList() {
   });
 
   ui.chatList.appendChild(fragment);
+
+  if (ui.forwardModal && !ui.forwardModal.hidden) {
+    renderForwardList();
+  }
 }
 
 function truncateText(text, limit) {
@@ -1033,7 +1336,16 @@ function getMessagePreviewText(message) {
       ? `You sent ${amountLabel} SOL to ${name}`
       : `${name} sent you ${amountLabel} SOL`;
   }
-  return truncateText(message.text || "", 48);
+  const forwardMeta = ensureForwardMeta(message);
+  const replyMeta = ensureReplyMeta(message);
+  const baseText = message.text || "";
+  if (forwardMeta) {
+    return `Forwarded from ${forwardMeta.author || "Unknown"}`;
+  }
+  if (replyMeta) {
+    return `↩ ${truncateText(baseText, 48)}`;
+  }
+  return truncateText(baseText, 48);
 }
 
 function createContactElement(contact) {
@@ -1048,7 +1360,8 @@ function createContactElement(contact) {
 
   const avatar = document.createElement("div");
   avatar.className = "contact-avatar";
-  setAvatar(avatar, contact.pubkey, 46);
+  const avatarLabel = getContactAvatarLabel(contact) || contact.pubkey;
+  setAvatar(avatar, contact.pubkey, 46, avatarLabel);
 
   const meta = document.createElement("div");
   meta.className = "chat-item__meta";
@@ -1134,7 +1447,7 @@ function clearChatView() {
   }
   setTextContent(ui.chatName, "Select chat");
   setTextContent(ui.chatStatus, "No conversation yet");
-  if (ui.chatAvatar) setAvatar(ui.chatAvatar, "solink", 52);
+  if (ui.chatAvatar) setAvatar(ui.chatAvatar, "solink", 52, "SOLink");
 
   if (ui.messageTimeline) {
     ui.messageTimeline.innerHTML = "";
@@ -1147,6 +1460,9 @@ function clearChatView() {
     ui.messageSearchInput.value = "";
   }
   updatePaymentRecipient(null);
+  clearReplyContext();
+  hideForwardModal();
+  hideMessageContextMenu();
 }
 
 function updateContactHeader() {
@@ -1156,7 +1472,7 @@ function updateContactHeader() {
     ui.chatHeaderMain.classList.remove("is-active");
     setTextContent(ui.chatName, "Select chat");
     setTextContent(ui.chatStatus, "No conversation yet");
-    setAvatar(ui.chatAvatar, "solink", 52);
+    setAvatar(ui.chatAvatar, "solink", 52, "SOLink");
     return;
   }
 
@@ -1164,11 +1480,11 @@ function updateContactHeader() {
   if (contact) {
     setTextContent(ui.chatName, contact.localName || shortenPubkey(contact.pubkey, 6));
     setTextContent(ui.chatStatus, shortenPubkey(contact.pubkey, 6));
-    setAvatar(ui.chatAvatar, contact.pubkey, 52);
+    setAvatar(ui.chatAvatar, contact.pubkey, 52, getContactAvatarLabel(contact));
   } else {
     setTextContent(ui.chatName, shortenPubkey(state.activeContactKey, 6));
     setTextContent(ui.chatStatus, state.activeContactKey);
-    setAvatar(ui.chatAvatar, state.activeContactKey, 52);
+    setAvatar(ui.chatAvatar, state.activeContactKey, 52, state.activeContactKey);
   }
   ui.chatHeaderMain.classList.add("is-active");
 }
@@ -1197,9 +1513,11 @@ function appendMessageToState(pubkey, message) {
   state.messages.set(pubkey, list);
 }
 
+
 function renderMessages(pubkey) {
   if (!ui.messageTimeline) return;
   ui.messageTimeline.innerHTML = "";
+  hideMessageContextMenu();
 
   if (!pubkey) {
     toggleEmptyState(true);
@@ -1247,6 +1565,16 @@ function createMessageBubble(message, highlightQueryText) {
   bubble.className = `bubble bubble--${message.direction === "out" ? "out" : "in"}`;
   bubble.dataset.messageId = message.id;
 
+  const forwardMeta = ensureForwardMeta(message);
+  if (forwardMeta) {
+    bubble.appendChild(createForwardPreviewBlock(forwardMeta));
+  }
+
+  const replyMeta = ensureReplyMeta(message);
+  if (replyMeta) {
+    bubble.appendChild(createReplyPreviewBlock(replyMeta));
+  }
+
   const textEl = document.createElement("div");
   textEl.className = "bubble__text";
 
@@ -1279,6 +1607,16 @@ function createPaymentBubble(message) {
   bubble.className = "bubble bubble--system";
   bubble.dataset.messageId = message.id;
 
+  const forwardMeta = ensureForwardMeta(message);
+  if (forwardMeta) {
+    bubble.appendChild(createForwardPreviewBlock(forwardMeta));
+  }
+
+  const replyMeta = ensureReplyMeta(message);
+  if (replyMeta) {
+    bubble.appendChild(createReplyPreviewBlock(replyMeta));
+  }
+
   const amountLabel = formatSolAmount(payment.lamports);
   const counterpartyName =
     message.direction === "out"
@@ -1308,6 +1646,496 @@ function createPaymentBubble(message) {
   bubble.appendChild(textEl);
   bubble.appendChild(meta);
   return bubble;
+}
+
+function createReplyPreviewBlock(replyMeta) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "bubble__reply";
+  const author = document.createElement("div");
+  author.className = "bubble__reply-author";
+  author.textContent = replyMeta.author || "Reply";
+  const text = document.createElement("div");
+  text.className = "bubble__reply-text";
+  text.textContent = replyMeta.preview || "[No text]";
+  wrapper.appendChild(author);
+  wrapper.appendChild(text);
+  return wrapper;
+}
+
+function createForwardPreviewBlock(forwardMeta) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "bubble__forward";
+  const bar = document.createElement("div");
+  bar.className = "bubble__forward-bar";
+  wrapper.appendChild(bar);
+  const label = document.createElement("div");
+  label.className = "bubble__forward-label";
+  label.textContent = "Forwarded";
+  const author = document.createElement("div");
+  author.className = "bubble__forward-author";
+  author.textContent = forwardMeta.author || "Unknown";
+  wrapper.appendChild(label);
+  wrapper.appendChild(author);
+  return wrapper;
+}
+
+function buildForwardMeta(record) {
+  if (!record?.message) return null;
+  const existingMeta = record.message.meta?.forwardedFrom || ensureForwardMeta(record.message);
+  if (existingMeta) {
+    return existingMeta;
+  }
+  const isOutgoing = record.message.direction === "out";
+  const authorName = isOutgoing ? getSelfDisplayName() : getContactDisplayName(record.contactKey);
+  const authorPubkey = isOutgoing
+    ? latestAppState?.walletPubkey || state.currentWallet || ""
+    : record.contactKey;
+  return {
+    author: authorName || "Unknown",
+    authorPubkey,
+    originalMessageId: record.message.id || null,
+    timestamp: record.message.timestamp || Date.now(),
+  };
+}
+
+function findMessageRecordById(messageId) {
+  if (!messageId) return null;
+  for (const [contactKey, list] of state.messages.entries()) {
+    const index = list.findIndex((item) => item.id === messageId);
+    if (index !== -1) {
+      return { contactKey, index, message: list[index] };
+    }
+  }
+  return null;
+}
+
+function showForwardModal(messageId) {
+  const record = findMessageById(messageId);
+  if (!record) {
+    showToast("Message not found");
+    return;
+  }
+  state.forwardContext.source = record;
+  state.forwardContext.filter = "";
+  state.forwardContext.selectedTarget = null;
+  if (ui.forwardSearch) {
+    ui.forwardSearch.value = "";
+  }
+  updateForwardSubtitle(record);
+  renderForwardList();
+  if (ui.forwardModal) {
+    ui.forwardModal.hidden = false;
+    requestAnimationFrame(() => ui.forwardModal?.classList.add("is-visible"));
+  }
+}
+
+function hideForwardModal() {
+  if (!ui.forwardModal || ui.forwardModal.hidden) return;
+  ui.forwardModal.classList.remove("is-visible");
+  ui.forwardModal.hidden = true;
+  state.forwardContext.source = null;
+  state.forwardContext.filter = "";
+  state.forwardContext.selectedTarget = null;
+  updateForwardSelectionUI();
+}
+
+function updateForwardSubtitle(record) {
+  if (!ui.forwardSubtitle) return;
+  const preview = truncateText(record?.message?.text || "[No text]", FORWARD_PREVIEW_LIMIT);
+  ui.forwardSubtitle.textContent = preview;
+}
+
+function renderForwardList() {
+  if (!ui.forwardList) return;
+  const query = (state.forwardContext.filter || "").trim().toLowerCase();
+  ui.forwardList.innerHTML = "";
+  const contacts = state.contacts.filter((contact) => contact.isSaved);
+  if (!contacts.length) {
+    const empty = document.createElement("div");
+    empty.className = "forward-modal__empty";
+    empty.textContent = "No saved contacts yet";
+    ui.forwardList.appendChild(empty);
+    return;
+  }
+  const filtered = contacts
+    .filter((contact) => {
+      if (!query) return true;
+      const label = (contact.localName || contact.pubkey || "").toLowerCase();
+      return label.includes(query);
+    })
+    .sort((a, b) => {
+      const labelA = (a.localName || a.pubkey).toLowerCase();
+      const labelB = (b.localName || b.pubkey).toLowerCase();
+      return labelA.localeCompare(labelB);
+    });
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "forward-modal__empty";
+    empty.textContent = "No matches found";
+    ui.forwardList.appendChild(empty);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  filtered.forEach((contact) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "forward-item";
+    button.dataset.forwardTarget = contact.pubkey;
+
+    const avatar = document.createElement("div");
+    avatar.className = "contact-avatar contact-avatar--sm";
+    setAvatar(avatar, contact.pubkey, 38, getContactAvatarLabel(contact));
+
+    const meta = document.createElement("div");
+    meta.className = "forward-item__meta";
+    const name = document.createElement("div");
+    name.className = "forward-item__name";
+    name.textContent = contact.localName || shortenPubkey(contact.pubkey, 6);
+    const preview = document.createElement("div");
+    preview.className = "forward-item__preview";
+    preview.textContent = contact.lastMessage
+      ? getMessagePreviewText(contact.lastMessage)
+      : "No messages yet";
+    meta.appendChild(name);
+    meta.appendChild(preview);
+
+    button.appendChild(avatar);
+    button.appendChild(meta);
+    fragment.appendChild(button);
+  });
+  ui.forwardList.appendChild(fragment);
+
+  updateForwardSelectionUI();
+}
+
+function handleForwardRecipientSelect(pubkey) {
+  const record = state.forwardContext.source;
+  if (!record) {
+    showToast("Nothing to forward");
+    hideForwardModal();
+    return;
+  }
+  state.forwardContext.selectedTarget = pubkey;
+  updateForwardSelectionUI();
+}
+
+async function forwardMessageToContact(record, targetPubkey) {
+  const normalizedTarget = normalizePubkey(targetPubkey);
+  if (!normalizedTarget) {
+    showToast("Invalid recipient");
+    return;
+  }
+  const message = record.message;
+  const baseText = (message.text || "").slice(0, MAX_MESSAGE_LENGTH);
+  const forwardMeta = buildForwardMeta(record);
+  const envelope = createForwardEnvelope(forwardMeta, baseText);
+  const success = await sendPreparedMessage({
+    targetPubkey: normalizedTarget,
+    displayText: baseText,
+    outboundText: envelope.text,
+    forwardMeta: envelope.forward,
+  });
+  if (success) {
+    showToast("Message forwarded");
+    await setActiveContact(normalizedTarget);
+  }
+}
+
+async function handleDeleteMessage(messageId) {
+  const record = findMessageRecordById(messageId);
+  if (!record) {
+    showToast("Message not found");
+    return;
+  }
+
+  if (hasWindow) {
+    const confirmed = window.confirm("Delete this message? It will only be removed for you.");
+    if (!confirmed) {
+      return;
+    }
+  }
+
+  try {
+    await removeMessageFromStore(messageId);
+  } catch (error) {
+    console.warn("Failed to delete message", error);
+    showToast("Failed to delete message");
+    return;
+  }
+
+  const currentList = state.messages.get(record.contactKey) || [];
+  const nextList = currentList.filter((item) => item.id !== messageId);
+  state.messages.set(record.contactKey, nextList);
+
+  if (state.activeContactKey === record.contactKey) {
+    renderMessages(record.contactKey);
+    updateConversationMeta(record.contactKey);
+  }
+
+  await refreshContacts(false);
+  showToast("Message deleted");
+}
+function updateForwardSelectionUI() {
+  if (!ui.forwardSelection || !ui.forwardConfirmButton || !ui.forwardSelectionName) return;
+  const target = state.forwardContext.selectedTarget;
+  if (!target) {
+    ui.forwardSelection.hidden = true;
+    ui.forwardSelectionName.textContent = "";
+    ui.forwardConfirmButton.disabled = true;
+    return;
+  }
+  const contact = state.contacts.find((item) => item.pubkey === target);
+  ui.forwardSelection.hidden = false;
+  ui.forwardSelectionName.textContent = contact?.localName || shortenPubkey(target, 6);
+  ui.forwardConfirmButton.disabled = false;
+}
+
+function handleTimelineContextMenu(event) {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    hideMessageContextMenu();
+    return;
+  }
+  const bubble = target.closest(".bubble");
+  if (!bubble || !bubble.dataset.messageId) {
+    hideMessageContextMenu();
+    return;
+  }
+  event.preventDefault();
+  const direction = bubble.classList.contains("bubble--out") ? "out" : "in";
+  showMessageContextMenu(event.clientX, event.clientY, bubble.dataset.messageId, direction);
+}
+
+function showMessageContextMenu(clientX, clientY, messageId, direction = "in") {
+  if (!ui.messageMenu) return;
+  messageMenuState.messageId = messageId;
+  messageMenuState.direction = direction;
+  ui.messageMenu.dataset.direction = direction;
+  ui.messageMenu.hidden = false;
+  requestAnimationFrame(() => {
+    if (!ui.messageMenu) return;
+    const rect = ui.messageMenu.getBoundingClientRect();
+    const margin = 12;
+    let x = clientX;
+    let y = clientY;
+    if (x + rect.width > window.innerWidth - margin) {
+      x = window.innerWidth - rect.width - margin;
+    }
+    if (y + rect.height > window.innerHeight - margin) {
+      y = window.innerHeight - rect.height - margin;
+    }
+    ui.messageMenu.style.left = `${Math.max(margin, x)}px`;
+    ui.messageMenu.style.top = `${Math.max(margin, y)}px`;
+    ui.messageMenu.classList.add("is-visible");
+  });
+}
+
+function hideMessageContextMenu() {
+  if (!ui.messageMenu || ui.messageMenu.hidden) return;
+  ui.messageMenu.classList.remove("is-visible");
+  ui.messageMenu.hidden = true;
+  messageMenuState.messageId = null;
+}
+
+function findMessageById(messageId) {
+  if (!messageId) return null;
+  for (const [contactKey, list] of state.messages.entries()) {
+    const match = list.find((item) => item.id === messageId);
+    if (match) {
+      return { contactKey, message: match };
+    }
+  }
+  return null;
+}
+
+function startReplyToMessage(messageId) {
+  const record = findMessageById(messageId);
+  if (!record) return;
+  const contactName =
+    record.message.direction === "out" ? getSelfDisplayName() : getContactDisplayName(record.contactKey);
+  state.replyContext = {
+    messageId: record.message.id,
+    contactKey: record.contactKey,
+    author: contactName || "Reply",
+    preview: buildReplyPreviewText(record.message) || "[No text]",
+    direction: record.message.direction,
+  };
+  updateReplyPreview();
+  ui.messageInput?.focus();
+}
+
+function getActiveReplyContext() {
+  if (
+    state.replyContext &&
+    state.replyContext.contactKey &&
+    state.replyContext.contactKey === state.activeContactKey
+  ) {
+    return state.replyContext;
+  }
+  return null;
+}
+
+function updateReplyPreview() {
+  if (!ui.replyPreview) return;
+  const context = getActiveReplyContext();
+  if (!context) {
+    ui.replyPreview.hidden = true;
+    return;
+  }
+  ui.replyPreview.hidden = false;
+  setTextContent(ui.replyAuthor, context.author || "Reply");
+  setTextContent(ui.replyText, context.preview || "");
+}
+
+function clearReplyContext() {
+  if (!state.replyContext) return;
+  state.replyContext = null;
+  updateReplyPreview();
+}
+
+function buildReplyPreviewText(message) {
+  if (!message) return "";
+  const payment = ensurePaymentMeta(message);
+  if (payment) {
+    const amountLabel = formatSolAmount(payment.lamports);
+    const counterpart = message.direction === "out" ? payment.to : payment.from;
+    const name = getContactDisplayName(counterpart) || shortenPubkey(counterpart, 6);
+    return message.direction === "out"
+      ? `You sent ${amountLabel} SOL to ${name}`
+      : `${name} sent you ${amountLabel} SOL`;
+  }
+  const baseText = message.text || "";
+  const safeText = baseText || "[No text]";
+  return truncateText(safeText, REPLY_PREVIEW_LIMIT);
+}
+
+function createReplyEnvelope(context, text) {
+  const payload = {
+    id: context.messageId,
+    author: context.author || "",
+    preview: context.preview || "",
+    direction: context.direction || "in",
+  };
+  const encoded = bytesToBase64(textEncoder.encode(JSON.stringify(payload)));
+  return {
+    text: `${REPLY_PREFIX}${encoded}${REPLY_DELIMITER}${text}`,
+    reply: payload,
+  };
+}
+
+function parseReplyEnvelope(rawText) {
+  if (typeof rawText !== "string" || !rawText.startsWith(REPLY_PREFIX)) {
+    return null;
+  }
+  const remainder = rawText.slice(REPLY_PREFIX.length);
+  const delimiterIndex = remainder.indexOf(REPLY_DELIMITER);
+  if (delimiterIndex === -1) {
+    return null;
+  }
+  const encoded = remainder.slice(0, delimiterIndex);
+  const rest = remainder.slice(delimiterIndex + REPLY_DELIMITER.length);
+  try {
+    const decoded = JSON.parse(textDecoder.decode(base64ToBytes(encoded)));
+    return {
+      text: rest.trimStart(),
+      reply: {
+        id: decoded.id || null,
+        author: decoded.author || "",
+        preview: decoded.preview || "",
+        direction: decoded.direction || "in",
+      },
+    };
+  } catch (error) {
+    console.warn("Failed to parse reply payload", error);
+    return null;
+  }
+}
+
+function ensureReplyMeta(message) {
+  if (!message) return null;
+  if (message.meta?.replyTo) {
+    return message.meta.replyTo;
+  }
+  if (typeof message.text !== "string") {
+    return null;
+  }
+  const parsed = parseReplyEnvelope(message.text);
+  if (!parsed) {
+    return null;
+  }
+  message.text = parsed.text;
+  message.meta = {
+    ...(message.meta || {}),
+    replyTo: parsed.reply,
+  };
+  return parsed.reply;
+}
+
+function createForwardEnvelope(meta, text) {
+  const payload = {
+    originalMessageId: meta?.originalMessageId || meta?.id || null,
+    author: meta?.author || "Unknown",
+    authorPubkey: meta?.authorPubkey || "",
+    timestamp: meta?.timestamp || meta?.originalTimestamp || Date.now(),
+  };
+  const encoded = bytesToBase64(textEncoder.encode(JSON.stringify(payload)));
+  return {
+    text: `${FORWARD_PREFIX}${encoded}${FORWARD_DELIMITER}${text}`,
+    forward: {
+      author: payload.author,
+      authorPubkey: payload.authorPubkey,
+      originalMessageId: payload.originalMessageId,
+      timestamp: payload.timestamp,
+    },
+  };
+}
+
+function parseForwardEnvelope(rawText) {
+  if (typeof rawText !== "string" || !rawText.startsWith(FORWARD_PREFIX)) {
+    return null;
+  }
+  const remainder = rawText.slice(FORWARD_PREFIX.length);
+  const delimiterIndex = remainder.indexOf(FORWARD_DELIMITER);
+  if (delimiterIndex === -1) {
+    return null;
+  }
+  const encoded = remainder.slice(0, delimiterIndex);
+  const rest = remainder.slice(delimiterIndex + FORWARD_DELIMITER.length);
+  try {
+    const decoded = JSON.parse(textDecoder.decode(base64ToBytes(encoded)));
+    return {
+      text: rest.trimStart(),
+      forward: {
+        author: decoded.author || "Unknown",
+        authorPubkey: decoded.authorPubkey || "",
+        originalMessageId: decoded.originalMessageId || decoded.id || null,
+        timestamp: decoded.timestamp || decoded.originalTimestamp || Date.now(),
+      },
+    };
+  } catch (error) {
+    console.warn("Failed to parse forward payload", error);
+    return null;
+  }
+}
+
+function ensureForwardMeta(message) {
+  if (!message) return null;
+  if (message.meta?.forwardedFrom) {
+    return message.meta.forwardedFrom;
+  }
+  if (typeof message.text !== "string") {
+    return null;
+  }
+  const parsed = parseForwardEnvelope(message.text);
+  if (!parsed) {
+    return null;
+  }
+  message.text = parsed.text;
+  message.meta = {
+    ...(message.meta || {}),
+    forwardedFrom: parsed.forward,
+  };
+  return parsed.forward;
 }
 
 const highlightQuery = (text, query) => {
@@ -1423,6 +2251,71 @@ async function sendSystemPaymentMessage({ lamports, fromPubkey, toPubkey, signat
 function handleCloseChat() {
   clearChatView();
   history.replaceState(null, "", "#/");
+}
+
+async function handleLogoutClick() {
+  if (hasWindow && !window.confirm("Log out and disconnect wallet?")) {
+    return;
+  }
+  try {
+    await requestLogout();
+    state.forwardContext = { source: null, filter: "", selectedTarget: null };
+    hideForwardModal();
+    clearReplyContext();
+    showToast("Logged out");
+  } catch (error) {
+    console.error("Logout failed", error);
+    showToast("Failed to log out");
+  }
+}
+
+async function handleExportData() {
+  try {
+    const dump = await exportLocalData();
+    const blob = new Blob([JSON.stringify(dump, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `solink-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast("Backup exported");
+  } catch (error) {
+    console.error("Export failed", error);
+    showToast("Export failed");
+  }
+}
+
+function handleImportFileChange(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+
+  if (hasWindow && !window.confirm("Importing will replace your current local data. Continue?")) {
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      await importLocalData(parsed);
+      showToast("Backup imported");
+      setTimeout(() => window.location.reload(), 400);
+    } catch (error) {
+      console.error("Import failed", error);
+      showToast("Import failed");
+    }
+  };
+  reader.onerror = () => {
+    console.error("Failed to read backup file");
+    showToast("Import failed");
+  };
+  reader.readAsText(file);
 }
 
 async function handleSendPayment() {
@@ -1600,31 +2493,46 @@ function handleMessageInput() {
   autoResizeTextarea(ui.messageInput);
 }
 
-async function handleSendMessage(text) {
-  if (!state.activeContactKey) {
+async function sendPreparedMessage({
+  targetPubkey,
+  displayText,
+  outboundText,
+  replyMeta,
+  forwardMeta,
+}) {
+  if (!targetPubkey) {
     showToast("Select a chat first");
-    return;
+    return false;
   }
   if (!latestAppState?.isAuthenticated) {
     showToast("Connect wallet to send messages");
-    return;
+    return false;
   }
 
-  const trimmed = text.slice(0, MAX_MESSAGE_LENGTH);
+  const normalized = normalizePubkey(targetPubkey);
+  if (!normalized) {
+    showToast("Invalid contact");
+    return false;
+  }
+
+  await ensureContact(normalized);
+
+  const trimmedDisplay = (displayText || "").slice(0, MAX_MESSAGE_LENGTH);
+  const effectiveOutbound = outboundText || trimmedDisplay;
   const timestamp = Date.now();
   let encryptionMeta = null;
   let sendPayload = {
-    to: state.activeContactKey,
-    text: trimmed,
+    to: normalized,
+    text: effectiveOutbound,
     timestamp,
   };
-  const sessionSecret = await ensureSessionSecret(state.activeContactKey);
+  const sessionSecret = await ensureSessionSecret(normalized);
   if (sessionSecret) {
-    const encrypted = encryptWithSecret(sessionSecret, trimmed);
+    const encrypted = encryptWithSecret(sessionSecret, effectiveOutbound);
     if (encrypted) {
       encryptionMeta = { nonce: encrypted.nonce, version: encrypted.version };
       sendPayload = {
-        to: state.activeContactKey,
+        to: normalized,
         ciphertext: encrypted.ciphertext,
         nonce: encrypted.nonce,
         version: encrypted.version,
@@ -1635,25 +2543,29 @@ async function handleSendMessage(text) {
 
   const message = {
     id: crypto.randomUUID(),
-    contactKey: state.activeContactKey,
+    contactKey: normalized,
     direction: "out",
-    text: trimmed,
+    text: trimmedDisplay,
     timestamp,
     status: "sending",
     meta: {
       encryption: encryptionMeta,
       ciphertext: encryptionMeta ? sendPayload.ciphertext : null,
+      ...(replyMeta ? { replyTo: replyMeta } : {}),
+      ...(forwardMeta ? { forwardedFrom: forwardMeta } : {}),
     },
   };
 
   await addMessage(message);
-  appendMessageToState(state.activeContactKey, message);
-  renderMessages(state.activeContactKey);
+  appendMessageToState(normalized, message);
+  if (state.activeContactKey === normalized) {
+    renderMessages(normalized);
+  }
 
   try {
     await sendMessage(sendPayload);
     await setMessageStatus(message.id, "sent");
-    appendMessageToState(state.activeContactKey, {
+    appendMessageToState(normalized, {
       ...message,
       status: "sent",
       meta: {
@@ -1662,20 +2574,47 @@ async function handleSendMessage(text) {
         ciphertext: encryptionMeta ? sendPayload.ciphertext : null,
       },
     });
-    renderMessages(state.activeContactKey);
-    updateContactPreviewFromMessage(state.activeContactKey, {
+    if (state.activeContactKey === normalized) {
+      renderMessages(normalized);
+    }
+    updateContactPreviewFromMessage(normalized, {
       ...message,
       status: "sent",
-      text: trimmed,
+      text: trimmedDisplay,
     });
     triggerImmediatePoll();
+    return true;
   } catch (error) {
     console.error("Send failed", error);
     await setMessageStatus(message.id, "failed");
-    appendMessageToState(state.activeContactKey, { ...message, status: "failed" });
-    renderMessages(state.activeContactKey);
+    appendMessageToState(normalized, { ...message, status: "failed" });
+    if (state.activeContactKey === normalized) {
+      renderMessages(normalized);
+    }
     showToast(error.message || "Failed to send message");
+    return false;
   }
+}
+
+async function handleSendMessage(text) {
+  if (!state.activeContactKey) {
+    showToast("Select a chat first");
+    return;
+  }
+
+  const trimmed = text.slice(0, MAX_MESSAGE_LENGTH);
+  const activeReplyContext = getActiveReplyContext();
+  const replyEnvelope = activeReplyContext ? createReplyEnvelope(activeReplyContext, trimmed) : null;
+  if (activeReplyContext) {
+    clearReplyContext();
+  }
+
+  await sendPreparedMessage({
+    targetPubkey: state.activeContactKey,
+    displayText: trimmed,
+    outboundText: replyEnvelope?.text,
+    replyMeta: replyEnvelope?.reply,
+  });
 }
 
 function updateContactPreviewFromMessage(pubkey, message) {
@@ -1734,19 +2673,43 @@ async function handleIncomingMessages(messages) {
     let ciphertext = hasCiphertext ? payload.ciphertext : null;
     let displayText = payload.text || "";
     if (encryptionMeta && ciphertext) {
-      const secret = await ensureSessionSecret(from);
+      let decrypted = null;
+      let secret = await ensureSessionSecret(from, {
+        remoteKeyHint: payload.senderEncryptionKey || null,
+      });
       if (secret) {
-        const decrypted = decryptWithSecret(secret, ciphertext, encryptionMeta.nonce);
-        if (decrypted !== null) {
-          displayText = decrypted;
-        } else {
-          console.warn("Failed to decrypt message", payload.id || "unknown");
-          displayText = "[Encrypted message]";
+        decrypted = decryptWithSecret(secret, ciphertext, encryptionMeta.nonce);
+      }
+      if (decrypted === null && payload.senderEncryptionKey) {
+        await resetSessionSecret(from);
+        secret = await ensureSessionSecret(from, {
+          remoteKeyHint: payload.senderEncryptionKey,
+          force: true,
+        });
+        if (secret) {
+          decrypted = decryptWithSecret(secret, ciphertext, encryptionMeta.nonce);
         }
+      }
+      if (decrypted !== null) {
+        displayText = decrypted;
       } else {
-        console.warn("Missing session secret for contact", from);
+        console.warn("Failed to decrypt message", payload.id || "unknown");
         displayText = "[Encrypted message]";
       }
+    }
+
+    let forwardMeta = null;
+    const forwardParse = parseForwardEnvelope(displayText);
+    if (forwardParse) {
+      displayText = forwardParse.text;
+      forwardMeta = forwardParse.forward;
+    }
+
+    const replyParse = parseReplyEnvelope(displayText);
+    let replyMeta = null;
+    if (replyParse) {
+      displayText = replyParse.text;
+      replyMeta = replyParse.reply;
     }
 
     const systemMeta = parsePaymentSystemMessage(displayText);
@@ -1764,6 +2727,16 @@ async function handleIncomingMessages(messages) {
           ? {
               systemType: "payment",
               payment: systemMeta,
+            }
+          : {}),
+        ...(replyMeta
+          ? {
+              replyTo: replyMeta,
+            }
+          : {}),
+        ...(forwardMeta
+          ? {
+              forwardedFrom: forwardMeta,
             }
           : {}),
       },
@@ -1841,6 +2814,7 @@ async function setActiveContact(pubkey) {
 
   state.activeContactKey = normalized;
   updateContactListSelection();
+  updateReplyPreview();
 
   await ensureContact(normalized);
   void ensureSessionSecret(normalized);
@@ -1883,7 +2857,7 @@ function updateConversationMeta(pubkey) {
     if (ui.infoLocalName) ui.infoLocalName.value = "";
     setTextContent(ui.infoMessageCount, "0");
     setTextContent(ui.infoFirstSeen, "—");
-    if (ui.infoAvatar) setAvatar(ui.infoAvatar, "solink", 62);
+    if (ui.infoAvatar) setAvatar(ui.infoAvatar, "solink", 62, "SOLink");
     ui.copyContactLinkButton?.setAttribute("disabled", "disabled");
     ui.removeContactButton?.setAttribute("disabled", "disabled");
     ui.toggleFavoriteButton?.setAttribute("disabled", "disabled");
@@ -1900,7 +2874,7 @@ function updateConversationMeta(pubkey) {
   if (ui.infoLocalName) ui.infoLocalName.value = contact?.localName || "";
   setTextContent(ui.infoMessageCount, String(messages.length));
   setTextContent(ui.infoFirstSeen, messages[0] ? formatDate(messages[0].timestamp) : "—");
-  if (ui.infoAvatar) setAvatar(ui.infoAvatar, pubkey, 62);
+  if (ui.infoAvatar) setAvatar(ui.infoAvatar, pubkey, 62, getContactAvatarLabel(contact) || pubkey);
 
   ui.copyContactLinkButton?.removeAttribute("disabled");
   ui.removeContactButton?.removeAttribute("disabled");
@@ -1947,8 +2921,39 @@ async function handleSearchSubmit() {
 
   const pubkey = normalizePubkey(raw);
   if (pubkey) {
-    await ensureContact(pubkey);
-    await refreshContacts(false);
+    const knownContact =
+      state.contacts.find((item) => item.pubkey === pubkey) || (await getContact(pubkey));
+
+    if (!knownContact) {
+      try {
+        const response = await fetchProfileByPubkey(pubkey);
+        const profile = response?.profile;
+        if (!profile?.pubkey) {
+          throw new Error("User not found");
+        }
+        const displayName = profile.displayName || (profile.nickname ? `@${profile.nickname}` : "");
+        const toastLabel = displayName || shortenPubkey(profile.pubkey, 6);
+        if (profile.encryptionPublicKey) {
+          rememberRemoteEncryptionKey(profile.pubkey, profile.encryptionPublicKey);
+        }
+        await ensureContact(profile.pubkey, {
+          localName: displayName,
+          encryptionPublicKey: profile.encryptionPublicKey || null,
+        });
+        await refreshContacts(false);
+        await setActiveContact(profile.pubkey);
+        ui.searchInput.value = "";
+        state.contactQuery = "";
+        renderContactList();
+        showToast(`Opened chat with ${toastLabel}`);
+        return;
+      } catch (error) {
+        console.warn("Pubkey lookup failed", error);
+        showToast(error.message || "User not found");
+        return;
+      }
+    }
+
     await setActiveContact(pubkey);
     ui.searchInput.value = "";
     state.contactQuery = "";
@@ -2033,7 +3038,7 @@ function updateProfileHeader() {
   const walletPubkey = latestAppState?.walletPubkey || getWalletPubkey();
   setTextContent(ui.profileWallet, walletPubkey ? shortenPubkey(walletPubkey) : "Wallet not connected");
 
-  setAvatar(ui.profileAvatar, state.profile.avatarSeed || "solink", 52);
+  setAvatar(ui.profileAvatar, state.profile.avatarSeed || "solink", 52, displayName);
   updateProfilePanel();
 }
 
@@ -2044,7 +3049,7 @@ function updateProfilePanel() {
   const walletPubkey = latestAppState?.walletPubkey || getWalletPubkey();
   setTextContent(ui.profilePanelWallet, walletPubkey ? shortenPubkey(walletPubkey) : "Wallet not connected");
   if (ui.profilePanelAvatar) {
-    setAvatar(ui.profilePanelAvatar, state.profile.avatarSeed || "solink", 62);
+    setAvatar(ui.profilePanelAvatar, state.profile.avatarSeed || "solink", 62, displayName);
   }
   if (ui.profileSettingsInput && document.activeElement !== ui.profileSettingsInput) {
     ui.profileSettingsInput.value = state.profile?.nickname || "";

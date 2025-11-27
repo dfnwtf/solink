@@ -1,17 +1,84 @@
 const API_BASE = window.SOLINK_API_BASE || '/api';
+const SESSION_STORAGE_KEY = 'solink.session.v1';
+export const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
 let sessionToken = null;
+let sessionMeta = null;
+let sessionRestored = false;
 
-export function setSessionToken(token) {
-  sessionToken = token;
+function removePersistedSession() {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function persistSessionMeta(meta) {
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(meta));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function isSessionExpired(meta) {
+  if (!meta?.timestamp) return true;
+  return Date.now() - meta.timestamp > SESSION_MAX_AGE_MS;
+}
+
+function restoreSessionFromStorage() {
+  if (sessionRestored) return;
+  sessionRestored = true;
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.token || !parsed?.pubkey || isSessionExpired(parsed)) {
+      removePersistedSession();
+      return;
+    }
+    sessionToken = parsed.token;
+    sessionMeta = parsed;
+  } catch (error) {
+    console.warn('Failed to restore session', error);
+  }
+}
+
+function ensureFreshSession() {
+  restoreSessionFromStorage();
+  if (sessionMeta && isSessionExpired(sessionMeta)) {
+    sessionToken = null;
+    sessionMeta = null;
+    removePersistedSession();
+  }
+}
+
+export function setSessionToken(token, pubkey) {
+  sessionToken = token || null;
+  if (token && pubkey) {
+    sessionMeta = { token, pubkey, timestamp: Date.now() };
+    persistSessionMeta(sessionMeta);
+  } else {
+    sessionMeta = null;
+    removePersistedSession();
+  }
 }
 
 export function clearSessionToken() {
   sessionToken = null;
+  sessionMeta = null;
+  removePersistedSession();
 }
 
 export function getSessionToken() {
+  ensureFreshSession();
   return sessionToken;
+}
+
+export function getPersistedSession() {
+  ensureFreshSession();
+  return sessionMeta ? { ...sessionMeta } : null;
 }
 
 function composeAbortSignals(signals) {
@@ -98,7 +165,7 @@ export async function verifySignature({ pubkey, nonce, signature }) {
   });
 
   if (result?.token) {
-    setSessionToken(result.token);
+    setSessionToken(result.token, pubkey);
   }
 
   return result;

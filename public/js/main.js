@@ -1,4 +1,4 @@
-import { fetchNonce, verifySignature, clearSessionToken, getSessionToken } from './api.js';
+import { fetchNonce, verifySignature, clearSessionToken, getSessionToken, getPersistedSession, SESSION_MAX_AGE_MS } from './api.js';
 
 const AUTO_CONNECT_FLAG_KEY = 'solink-auto-connect';
 
@@ -15,6 +15,7 @@ const state = {
 };
 
 const listeners = new Set();
+let sessionCheckTimer = null;
 
 function enableAutoConnect() {
   try {
@@ -97,6 +98,21 @@ function updateState(partial) {
   emitState();
 }
 
+function scheduleSessionCheck() {
+  clearTimeout(sessionCheckTimer);
+  const session = getPersistedSession();
+  if (!session?.timestamp) {
+    return;
+  }
+  const age = Date.now() - session.timestamp;
+  const remaining = Math.max(0, SESSION_MAX_AGE_MS - age);
+  sessionCheckTimer = setTimeout(() => {
+    if (!getSessionToken()) {
+      updateState({ isAuthenticated: false });
+    }
+  }, Math.min(remaining + 1000, SESSION_MAX_AGE_MS));
+}
+
 function getProvider() {
   const phantom = window.phantom?.solana;
   if (phantom?.isPhantom) {
@@ -135,6 +151,7 @@ async function establishSession(pubkey) {
 
   const result = await verifySignature({ pubkey, nonce, signature: signatureBase58 });
   updateState({ isAuthenticated: Boolean(result?.token) });
+  scheduleSessionCheck();
 }
 
 async function connectWallet({ silent = false, allowRedirect = false } = {}) {
@@ -164,7 +181,17 @@ async function connectWallet({ silent = false, allowRedirect = false } = {}) {
   }
 
   updateState({ walletPubkey: pubkey });
-  await establishSession(pubkey);
+
+  const hasFreshSession = getPersistedSession()?.token && getPersistedSession()?.pubkey === pubkey;
+  if (silent && hasFreshSession) {
+    updateState({ isAuthenticated: true });
+    enableAutoConnect();
+    return;
+  }
+
+  if (!silent || !hasFreshSession) {
+    await establishSession(pubkey);
+  }
 
   enableAutoConnect();
 }
@@ -172,15 +199,24 @@ async function connectWallet({ silent = false, allowRedirect = false } = {}) {
 function handleAccountChange(newPubkey) {
   if (newPubkey) {
     const base58 = typeof newPubkey === 'string' ? newPubkey : newPubkey.toBase58?.();
-    clearSessionToken();
-    updateState({ walletPubkey: base58 || null, isAuthenticated: false });
-    if (base58) {
+    const session = getPersistedSession();
+    if (session?.pubkey && base58 && session.pubkey !== base58) {
+      console.info('Wallet account switched in Phantom, keeping existing SOLink session');
+      return;
+    }
+    updateState({ walletPubkey: base58 || null, isAuthenticated: Boolean(getSessionToken()) });
+    if (base58 && (!session || session.pubkey !== base58)) {
       connectWallet().catch((error) => console.warn('Re-auth failed', error));
     }
   } else {
-    clearSessionToken();
-    disableAutoConnect();
-    updateState({ walletPubkey: null, isAuthenticated: false });
+    const session = getPersistedSession();
+    if (session?.pubkey && session.token) {
+      updateState({ provider: null, walletPubkey: session.pubkey, isAuthenticated: true });
+    } else {
+      clearSessionToken();
+      disableAutoConnect();
+      updateState({ walletPubkey: null, isAuthenticated: false });
+    }
   }
 }
 
@@ -199,16 +235,26 @@ export function getWalletPubkey() {
 }
 
 export function isAuthenticated() {
-  return state.isAuthenticated && Boolean(getSessionToken());
+  const token = getSessionToken();
+  if (!token) {
+    return false;
+  }
+  if (!state.isAuthenticated) {
+    updateState({ isAuthenticated: true });
+  }
+  return true;
 }
 
 export function getProviderInstance() {
   return refreshProvider();
 }
 
-export async function requestConnect() {
+export async function requestConnect(options = {}) {
   try {
     await connectWallet({ allowRedirect: true });
+    if (options.forceReload && typeof window !== 'undefined') {
+      window.location.reload();
+    }
   } catch (error) {
     console.error('Wallet connect error', error);
     throw error;
@@ -218,9 +264,16 @@ export async function requestConnect() {
 export function initApp() {
   const provider = refreshProvider();
 
+  const persisted = getPersistedSession();
+  const hasPersistedSession = Boolean(persisted?.token && persisted.pubkey);
+  if (hasPersistedSession) {
+    updateState({ walletPubkey: persisted.pubkey, isAuthenticated: true });
+    scheduleSessionCheck();
+  }
+
   if (provider) {
     provider.on?.('accountChanged', handleAccountChange);
-    if (shouldAutoConnect()) {
+    if (shouldAutoConnect() && !hasPersistedSession) {
       connectWallet({ silent: true }).catch(() => {
         // ignore: user not yet trusted or not connected
       });
@@ -239,4 +292,17 @@ export function initApp() {
   });
 
   emitState();
+}
+
+export async function logout() {
+  try {
+    await state.provider?.disconnect?.();
+  } catch (error) {
+    console.warn('Wallet disconnect failed', error);
+  }
+  disableAutoConnect();
+  clearSessionToken();
+  updateState({ walletPubkey: null, isAuthenticated: false });
+  clearTimeout(sessionCheckTimer);
+  sessionCheckTimer = null;
 }
