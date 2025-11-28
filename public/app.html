@@ -3,8 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>SOLink Messenger</title>
-    <link rel="stylesheet" href="./css/style.css" />
+    <link rel="stylesheet" href="./css/style.css?v=20241128" />
     <script type="importmap">
       {
         "imports": {
@@ -186,6 +189,9 @@
 
       <section class="chat-column" data-role="chat-view">
         <header class="chat-column__header">
+          <button type="button" class="mobile-back-btn" data-action="mobile-back" aria-label="Back to chats">
+            <span class="icon icon-arrow-left"></span>
+          </button>
           <div class="chat-column__contact">
             <div class="contact-avatar" data-role="chat-avatar"></div>
             <div>
@@ -198,6 +204,9 @@
             <input type="search" placeholder="Search messages" data-role="message-search-input" autocomplete="off" />
           </form>
           <div class="chat-column__actions">
+            <button type="button" class="ghost-icon-button mobile-info-btn" data-action="open-mobile-info" aria-label="Contact info">
+              <span class="icon icon-more"></span>
+            </button>
             <button type="button" class="ghost-icon-button" data-action="close-chat" aria-label="Close chat">
               <span class="icon icon-close"></span>
             </button>
@@ -265,7 +274,7 @@
           <div class="info-panel__actions">
             <button type="button" class="ghost-button" data-action="toggle-favorite" disabled>Mark favorite</button>
             <button type="button" class="ghost-button" data-action="toggle-save-contact" disabled>Save contact</button>
-            <button type="button" class="ghost-button" data-action="copy-contact-link" disabled>Copy link</button>
+            <button type="button" class="ghost-button" data-action="copy-contact-link" disabled>Copy wallet</button>
             <button type="button" class="ghost-button" data-action="remove-contact" disabled>Remove</button>
           </div>
         </div>
@@ -298,6 +307,84 @@
           <p>Coming soon.</p>
         </div>
       </aside>
+
+      <!-- Mobile Bottom Navigation -->
+      <nav class="mobile-nav" data-role="mobile-nav">
+        <button type="button" class="mobile-nav__item is-active" data-nav="all">
+          <span class="icon icon-chats"></span>
+          <span class="mobile-nav__label">Chats</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="contacts">
+          <span class="icon icon-contacts"></span>
+          <span class="mobile-nav__label">Contacts</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="favorites">
+          <span class="icon icon-favorites"></span>
+          <span class="mobile-nav__label">Favorites</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="profile">
+          <span class="icon icon-profile"></span>
+          <span class="mobile-nav__label">Profile</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="settings">
+          <span class="icon icon-settings"></span>
+          <span class="mobile-nav__label">Settings</span>
+        </button>
+      </nav>
+
+      <!-- Mobile Contact Info Sheet -->
+      <div class="mobile-info-sheet" data-role="mobile-info-sheet" hidden>
+        <div class="mobile-info-sheet__backdrop" data-action="close-mobile-info"></div>
+        <div class="mobile-info-sheet__panel">
+          <div class="mobile-info-sheet__handle"></div>
+          <header class="mobile-info-sheet__header">
+            <div class="contact-avatar mobile-info-sheet__avatar" data-role="mobile-info-avatar"></div>
+            <div class="mobile-info-sheet__meta">
+              <div class="mobile-info-sheet__name" data-role="mobile-info-name">Contact</div>
+              <div class="mobile-info-sheet__pubkey" data-role="mobile-info-pubkey">—</div>
+            </div>
+          </header>
+          
+          <div class="mobile-info-sheet__section">
+            <label class="mobile-info-sheet__field">
+              <span class="mobile-info-sheet__label">Local name</span>
+              <input type="text" placeholder="Add a name..." data-role="mobile-info-local-name" />
+            </label>
+          </div>
+          
+          <div class="mobile-info-sheet__actions">
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-toggle-favorite">
+              <span class="icon icon-favorites"></span>
+              <span data-role="mobile-favorite-label">Mark favorite</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-toggle-save">
+              <span class="icon icon-contacts"></span>
+              <span data-role="mobile-save-label">Save contact</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-copy-wallet">
+              <span class="icon icon-copy"></span>
+              <span>Copy wallet</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action mobile-info-sheet__action--danger" data-action="mobile-remove-contact">
+              <span class="icon icon-trash"></span>
+              <span>Remove</span>
+            </button>
+          </div>
+          
+          <div class="mobile-info-sheet__section mobile-info-sheet__section--payment">
+            <div class="mobile-info-sheet__section-title">Send SOL</div>
+            <p class="mobile-info-sheet__hint">Transfer directly from your wallet.</p>
+            <div class="mobile-info-sheet__payment">
+              <input type="number" min="0" step="0.01" placeholder="0.00" data-role="mobile-payment-amount" />
+              <select data-role="mobile-payment-token">
+                <option value="SOL">SOL</option>
+              </select>
+            </div>
+            <button type="button" class="primary-button" data-action="mobile-send-payment" disabled>Send</button>
+            <p class="mobile-info-sheet__recipient">Recipient: <span data-role="mobile-payment-recipient">—</span></p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="connect-overlay" data-role="connect-overlay" hidden>
@@ -407,6 +494,6 @@
     <script>
       window.SOLINK_API_BASE = '/api';
     </script>
-    <script type="module" src="./js/chat.js"></script>
+    <script type="module" src="./js/chat.js?v=20241128"></script>
   </body>
 </html>

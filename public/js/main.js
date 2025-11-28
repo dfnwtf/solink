@@ -1,4 +1,20 @@
 import { fetchNonce, verifySignature, clearSessionToken, getSessionToken, getPersistedSession, SESSION_MAX_AGE_MS } from './api.js';
+import {
+  hasPhantomCallback,
+  parsePhantomCallback,
+  processConnectCallback,
+  processSignCallback,
+  processTransactionCallback,
+  clearPhantomParams,
+  initiateMobileConnect,
+  initiateMobileSign,
+  initiateMobileTransaction,
+  getMobileSession,
+  clearMobileSessionData,
+  redirectToPhantomBrowser,
+  getPendingAction,
+  hasMobileSession
+} from './phantom-mobile.js';
 
 const AUTO_CONNECT_FLAG_KEY = 'solink-auto-connect';
 
@@ -113,6 +129,178 @@ function scheduleSessionCheck() {
   }, Math.min(remaining + 1000, SESSION_MAX_AGE_MS));
 }
 
+// Storage key for pending nonce (survives redirect) - using localStorage for iOS Safari
+const PENDING_NONCE_KEY = 'solink.phantom.pending.nonce';
+
+function savePendingNonce(pubkey, nonce) {
+  try {
+    localStorage.setItem(PENDING_NONCE_KEY, JSON.stringify({ 
+      pubkey, 
+      nonce,
+      timestamp: Date.now()
+    }));
+    console.log('[Phantom Mobile] Pending nonce saved for:', pubkey);
+  } catch (e) {
+    console.warn('Failed to save pending nonce', e);
+  }
+}
+
+function loadPendingNonce() {
+  try {
+    const data = localStorage.getItem(PENDING_NONCE_KEY);
+    if (!data) {
+      console.log('[Phantom Mobile] No pending nonce found');
+      return null;
+    }
+    const parsed = JSON.parse(data);
+    // Check if nonce is not too old (10 minutes max)
+    if (parsed.timestamp && Date.now() - parsed.timestamp > 10 * 60 * 1000) {
+      console.log('[Phantom Mobile] Pending nonce expired');
+      clearPendingNonce();
+      return null;
+    }
+    console.log('[Phantom Mobile] Pending nonce loaded for:', parsed.pubkey);
+    return parsed;
+  } catch (e) {
+    console.error('[Phantom Mobile] Failed to load pending nonce', e);
+    return null;
+  }
+}
+
+function clearPendingNonce() {
+  try {
+    localStorage.removeItem(PENDING_NONCE_KEY);
+  } catch (e) {
+    // ignore
+  }
+}
+
+// Handle Phantom mobile callback
+async function handlePhantomMobileCallback() {
+  console.log('[Phantom Mobile] Checking for callback...');
+  console.log('[Phantom Mobile] URL:', window.location.href);
+  console.log('[Phantom Mobile] hasPhantomCallback:', hasPhantomCallback());
+  
+  if (!hasPhantomCallback()) return false;
+  
+  const callback = parsePhantomCallback();
+  console.log('[Phantom Mobile] Parsed callback:', callback);
+  
+  if (!callback) {
+    clearPhantomParams();
+    return false;
+  }
+  
+  try {
+    if (callback.error) {
+      console.error('[Phantom Mobile] Error:', callback.errorMessage);
+      clearPhantomParams();
+      clearPendingNonce();
+      return false;
+    }
+    
+    if (callback.action === 'connect') {
+      console.log('[Phantom Mobile] Processing CONNECT callback...');
+      // Process connect response
+      const session = processConnectCallback(callback);
+      console.log('[Phantom Mobile] Connect session:', session);
+      const pubkey = session.publicKey;
+      
+      updateState({ walletPubkey: pubkey });
+      clearPhantomParams();
+      
+      // Now we need to sign a message for authentication
+      // Fetch nonce from server and save it for later verification
+      console.log('[Phantom Mobile] Fetching nonce for:', pubkey);
+      const { nonce } = await fetchNonce(pubkey);
+      console.log('[Phantom Mobile] Got nonce:', nonce);
+      savePendingNonce(pubkey, nonce);
+      
+      // Initiate sign with the nonce as message
+      console.log('[Phantom Mobile] Initiating sign...');
+      initiateMobileSign(nonce);
+      return true;
+    }
+    
+    if (callback.action === 'sign') {
+      console.log('[Phantom Mobile] Processing SIGN callback...');
+      // Process sign response
+      const result = processSignCallback(callback);
+      console.log('[Phantom Mobile] Sign result:', result);
+      
+      const mobileSession = getMobileSession();
+      const pendingNonce = loadPendingNonce();
+      console.log('[Phantom Mobile] Mobile session:', mobileSession);
+      console.log('[Phantom Mobile] Pending nonce:', pendingNonce);
+      
+      const pubkey = pendingNonce?.pubkey || mobileSession?.publicKey || result.publicKey;
+      const nonce = pendingNonce?.nonce;
+      
+      clearPhantomParams();
+      
+      if (!nonce) {
+        console.error('[Phantom Mobile] No pending nonce found!');
+        clearPendingNonce();
+        return false;
+      }
+      
+      // Verify signature with backend
+      console.log('[Phantom Mobile] Verifying signature...');
+      console.log('[Phantom Mobile] pubkey:', pubkey);
+      console.log('[Phantom Mobile] nonce:', nonce);
+      console.log('[Phantom Mobile] signature:', result.signature);
+      
+      const verifyResult = await verifySignature({
+        pubkey,
+        nonce,
+        signature: result.signature
+      });
+      
+      console.log('[Phantom Mobile] Verify result:', verifyResult);
+      clearPendingNonce();
+      
+      updateState({
+        walletPubkey: pubkey,
+        isAuthenticated: Boolean(verifyResult?.token)
+      });
+      
+      if (verifyResult?.token) {
+        enableAutoConnect();
+        scheduleSessionCheck();
+        console.log('[Phantom Mobile] SUCCESS! User authenticated.');
+      }
+      
+      return true;
+    }
+    
+    if (callback.action === 'transaction') {
+      console.log('[Phantom Mobile] Processing TRANSACTION callback...');
+      try {
+        const result = processTransactionCallback(callback);
+        console.log('[Phantom Mobile] Transaction result:', result);
+        clearPhantomParams();
+        
+        // Store the signature for the pending transaction
+        if (result.signature) {
+          localStorage.setItem('solink.pending.tx.signature', result.signature);
+        }
+        
+        return true;
+      } catch (error) {
+        console.error('[Phantom Mobile] Transaction callback error:', error);
+        clearPhantomParams();
+        return false;
+      }
+    }
+  } catch (error) {
+    console.error('[Phantom Mobile] Callback error:', error);
+    clearPhantomParams();
+    clearPendingNonce();
+  }
+  
+  return false;
+}
+
 function getProvider() {
   const phantom = window.phantom?.solana;
   if (phantom?.isPhantom) {
@@ -126,8 +314,15 @@ function getProvider() {
 }
 
 function redirectToPhantomApp() {
-  const target = encodeURIComponent(window.location.href);
-  window.location.href = `https://phantom.app/ul/browse/${target}`;
+  // Use deeplink connect instead of browse
+  initiateMobileConnect();
+}
+
+function handleDisconnect() {
+  console.info('Wallet disconnected');
+  clearSessionToken();
+  disableAutoConnect();
+  updateState({ walletPubkey: null, isAuthenticated: false });
 }
 
 function refreshProvider() {
@@ -135,6 +330,7 @@ function refreshProvider() {
   if (provider !== state.provider) {
     updateState({ provider });
     provider?.on?.('accountChanged', handleAccountChange);
+    provider?.on?.('disconnect', handleDisconnect);
   }
   return provider;
 }
@@ -170,6 +366,7 @@ async function connectWallet({ silent = false, allowRedirect = false } = {}) {
   if (provider !== state.provider) {
     updateState({ provider });
     provider.on?.('accountChanged', handleAccountChange);
+    provider.on?.('disconnect', handleDisconnect);
   }
 
   const connectArgs = silent ? { onlyIfTrusted: true } : undefined;
@@ -249,6 +446,12 @@ export function getProviderInstance() {
   return refreshProvider();
 }
 
+export function isMobileDevice() {
+  return state.isMobile;
+}
+
+export { initiateMobileTransaction, hasMobileSession };
+
 export async function requestConnect(options = {}) {
   try {
     await connectWallet({ allowRedirect: true });
@@ -261,7 +464,21 @@ export async function requestConnect(options = {}) {
   }
 }
 
-export function initApp() {
+export async function initApp() {
+  // Check for Phantom mobile callback first
+  if (hasPhantomCallback()) {
+    try {
+      const handled = await handlePhantomMobileCallback();
+      if (handled) {
+        // Callback handled, emit state and continue with normal init
+        emitState();
+      }
+    } catch (error) {
+      console.error('Mobile callback handling failed:', error);
+      clearPhantomParams();
+    }
+  }
+  
   const provider = refreshProvider();
 
   const persisted = getPersistedSession();
@@ -273,6 +490,7 @@ export function initApp() {
 
   if (provider) {
     provider.on?.('accountChanged', handleAccountChange);
+    provider.on?.('disconnect', handleDisconnect);
     if (shouldAutoConnect() && !hasPersistedSession) {
       connectWallet({ silent: true }).catch(() => {
         // ignore: user not yet trusted or not connected
@@ -302,6 +520,8 @@ export async function logout() {
   }
   disableAutoConnect();
   clearSessionToken();
+  clearMobileSessionData();
+  clearPendingNonce();
   updateState({ walletPubkey: null, isAuthenticated: false });
   clearTimeout(sessionCheckTimer);
   sessionCheckTimer = null;
