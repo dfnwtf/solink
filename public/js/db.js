@@ -63,6 +63,7 @@ export async function upsertContact(contact) {
     localName: contact.localName || '',
     pinned: Boolean(contact.pinned),
     color: contact.color || null,
+    isSaved: Boolean(contact.isSaved),
     unreadCount: Number.isFinite(contact.unreadCount) ? contact.unreadCount : 0,
     createdAt: contact.createdAt || Date.now(),
     updatedAt: Date.now(),
@@ -88,6 +89,12 @@ export async function updateContact(pubkey, changes) {
     unreadCount: Number.isFinite(changes.unreadCount)
       ? changes.unreadCount
       : existing.unreadCount || 0,
+    isSaved:
+      typeof changes.isSaved === 'boolean'
+        ? changes.isSaved
+        : typeof existing.isSaved === 'boolean'
+          ? existing.isSaved
+          : false,
     updatedAt: Date.now(),
   };
   await withStore(CONTACTS_STORE, 'readwrite', (store) => store.put(payload));
