@@ -696,13 +696,24 @@ function normalizeContact(contact) {
     localName: contact.localName || "",
     pinned: Boolean(contact.pinned),
     color: contact.color || null,
-     isSaved: Boolean(contact.isSaved),
+    isSaved: Boolean(contact.isSaved),
     unreadCount: Number.isFinite(contact.unreadCount) ? contact.unreadCount : 0,
     createdAt: contact.createdAt || now,
     updatedAt: contact.updatedAt || now,
     lastMessage: contact.lastMessage || null,
     encryptionPublicKey: contact.encryptionPublicKey || null,
   };
+}
+
+function sortByRecentActivity(list) {
+  return [...list].sort((a, b) => {
+    if (a.pinned !== b.pinned) {
+      return a.pinned ? -1 : 1;
+    }
+    const timeA = a.lastMessage?.timestamp || a.updatedAt || 0;
+    const timeB = b.lastMessage?.timestamp || b.updatedAt || 0;
+    return timeB - timeA;
+  });
 }
 
 async function hydrateContactProfile(pubkey, { force = false } = {}) {
@@ -818,16 +829,7 @@ async function refreshContacts(shouldUpdateMeta = true) {
     }),
   );
 
-  enhanced.sort((a, b) => {
-    if (a.pinned !== b.pinned) {
-      return a.pinned ? -1 : 1;
-    }
-    const timeA = a.lastMessage?.timestamp || a.updatedAt || 0;
-    const timeB = b.lastMessage?.timestamp || b.updatedAt || 0;
-    return timeB - timeA;
-  });
-
-  state.contacts = enhanced;
+  state.contacts = sortByRecentActivity(enhanced);
   renderContactList();
   updateContactHeader();
   if (state.activeContactKey && shouldUpdateMeta) {
@@ -850,6 +852,7 @@ function filterContactsList() {
     if (state.filter === "favorites") {
       contacts = contacts.filter((contact) => contact.pinned);
     }
+    contacts = sortByRecentActivity(contacts);
   }
 
   if (state.contactQuery) {
