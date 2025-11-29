@@ -793,6 +793,7 @@ function updateContactInState(pubkey, changes) {
   const merged = normalizeContact({ ...state.contacts[index], ...changes, updatedAt: Date.now() });
   state.contacts[index] = merged;
   state.contacts = sortByRecentActivity(state.contacts);
+  renderContactList();
 }
 async function refreshContacts(shouldUpdateMeta = true) {
   let contacts = await getContacts();
@@ -1762,6 +1763,16 @@ function registerDebugHelpers() {
     setActiveContact,
     refreshContacts,
     getEncryptionKeys,
+    logContacts() {
+      console.table(
+        state.contacts.map((contact) => ({
+          pubkey: contact.pubkey.slice(0, 6),
+          pinned: contact.pinned,
+          saved: contact.isSaved,
+          last: contact.lastMessage?.timestamp || contact.updatedAt || 0,
+        })),
+      );
+    },
   };
 }
 
