@@ -1,4 +1,67 @@
 import nacl from "https://cdn.skypack.dev/tweetnacl@1.0.3?min";
+
+// Base58 alphabet (same as Bitcoin/Solana)
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function decodeBase58(str) {
+  if (!str || str.length === 0) return new Uint8Array(0);
+  
+  const bytes = [];
+  for (let i = 0; i < str.length; i++) {
+    const index = BASE58_ALPHABET.indexOf(str[i]);
+    if (index === -1) throw new Error('Invalid base58 character');
+    
+    let carry = index;
+    for (let j = 0; j < bytes.length; j++) {
+      carry += bytes[j] * 58;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  
+  // Handle leading zeros
+  for (let i = 0; i < str.length && str[i] === '1'; i++) {
+    bytes.push(0);
+  }
+  
+  return new Uint8Array(bytes.reverse());
+}
+
+function encodeBase58(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) return '';
+  
+  let digits = [0];
+  for (let i = 0; i < bytes.length; i++) {
+    let carry = bytes[i];
+    for (let j = 0; j < digits.length; j++) {
+      const x = digits[j] * 256 + carry;
+      digits[j] = x % 58;
+      carry = Math.floor(x / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+  
+  for (let k = 0; bytes[k] === 0 && k < bytes.length - 1; k++) {
+    digits.push(0);
+  }
+  
+  return digits.reverse().map(d => BASE58_ALPHABET[d]).join('');
+}
+
+// Hash data for signing using SHA-256
+async function hashData(data) {
+  const encoder = new TextEncoder();
+  const dataBuffer = encoder.encode(data);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
+  return new Uint8Array(hashBuffer);
+}
 import {
   Connection,
   PublicKey,
@@ -31,6 +94,10 @@ import {
   ackMessages,
   updateEncryptionKey,
   getSessionToken,
+  getSessionDurationMs,
+  setSessionDurationMs,
+  fetchTokenPreview,
+  fetchDexPairPreview,
 } from "./api.js";
 import {
   upsertContact,
@@ -54,6 +121,7 @@ import {
   deleteSessionSecret as removePersistedSessionSecret,
   exportLocalData,
   importLocalData,
+  deleteMessagesForContact,
 } from "./db.js";
 
 const POLL_LONG_WAIT_MS = 15000;
@@ -133,6 +201,9 @@ const ui = {
   navButtons: [],
 };
 
+// PWA Install Prompt
+let deferredInstallPrompt = null;
+
 const contactProfileLookups = new Map();
 const contactProfileCooldown = new Map();
 
@@ -187,6 +258,7 @@ async function loadWorkspace(walletPubkey) {
 function cacheDom() {
   ui.navButtons = Array.from(document.querySelectorAll("[data-nav]"));
   ui.navReconnect = document.querySelector("[data-action=\"reconnect-wallet\"]");
+  ui.navInstall = document.querySelector("[data-action=\"install-app\"]");
   ui.connectOverlay = document.querySelector("[data-role=\"connect-overlay\"]");
   ui.overlayConnectButton = document.querySelector("[data-role=\"connect-overlay\"] [data-action=\"connect-wallet\"]");
 
@@ -209,6 +281,7 @@ function cacheDom() {
   ui.profilePanelWallet = document.querySelector("[data-role=\"profile-panel-wallet\"]");
   ui.settingsPanel = document.querySelector("[data-role=\"settings-panel\"]");
   ui.settingsSoundToggle = document.querySelector("[data-role=\"settings-sound-toggle\"]");
+  ui.settingsSessionDuration = document.querySelector("[data-role=\"settings-session-duration\"]");
   ui.exportDataButton = document.querySelector("[data-action=\"export-data\"]");
   ui.importDataButton = document.querySelector("[data-action=\"import-data\"]");
   ui.importFileInput = document.querySelector("[data-role=\"import-file\"]");
@@ -251,10 +324,10 @@ function cacheDom() {
   ui.infoAvatar = document.querySelector("[data-role=\"info-avatar\"]");
   ui.infoName = document.querySelector("[data-role=\"info-name\"]");
   ui.infoPubkey = document.querySelector("[data-role=\"info-pubkey\"]");
-  ui.infoLocalName = document.querySelector("[data-role=\"info-local-name\"]");
   ui.infoMessageCount = document.querySelector("[data-role=\"info-message-count\"]");
   ui.infoFirstSeen = document.querySelector("[data-role=\"info-first-seen\"]");
   ui.copyContactLinkButton = document.querySelector("[data-action=\"copy-contact-link\"]");
+  ui.clearChatButton = document.querySelector("[data-action=\"clear-chat\"]");
   ui.removeContactButton = document.querySelector("[data-action=\"remove-contact\"]");
   ui.toggleFavoriteButton = document.querySelector("[data-action=\"toggle-favorite\"]");
   ui.saveContactButton = document.querySelector("[data-action=\"toggle-save-contact\"]");
@@ -393,8 +466,92 @@ function bindEvents() {
     });
   };
 
+  const handleInstallClick = async () => {
+    const browser = ui.navInstall?.dataset.browser;
+    
+    // Firefox - show instructions
+    if (browser === "firefox") {
+      showInstallInstructions("firefox");
+      return;
+    }
+    
+    // Safari - show instructions  
+    if (browser === "safari") {
+      showInstallInstructions("safari");
+      return;
+    }
+    
+    // Chromium browsers - use native prompt
+    if (!deferredInstallPrompt) {
+      showToast("App is already installed");
+      return;
+    }
+    
+    // Show the install prompt
+    deferredInstallPrompt.prompt();
+    
+    // Wait for user response
+    const { outcome } = await deferredInstallPrompt.userChoice;
+    
+    if (outcome === "accepted") {
+      showToast("SOLink installed successfully! 🎉");
+      ui.navInstall?.setAttribute("hidden", "");
+    }
+    
+    // Clear the prompt - can only be used once
+    deferredInstallPrompt = null;
+  };
+  
+  const showInstallInstructions = (browser) => {
+    const modal = document.createElement("div");
+    modal.className = "install-modal";
+    
+    let instructions = "";
+    if (browser === "firefox") {
+      instructions = `
+        <h3>Firefox doesn't support auto-install</h3>
+        <p>But you can create a shortcut manually:</p>
+        <ol>
+          <li>Click <strong>☰</strong> (menu) in the top right corner</li>
+          <li>Select <strong>"More tools"</strong></li>
+          <li>Click <strong>"Create shortcut..."</strong></li>
+          <li>Check <strong>"Open as window"</strong></li>
+        </ol>
+        <p class="install-modal__alt">Or use <a href="https://chrome.google.com" target="_blank">Chrome</a> / <a href="https://www.microsoft.com/edge" target="_blank">Edge</a> for auto-install</p>
+      `;
+    } else if (browser === "safari") {
+      instructions = `
+        <h3>Install on Safari</h3>
+        <p>Add SOLink to your home screen:</p>
+        <ol>
+          <li>Tap the <strong>Share</strong> button (📤)</li>
+          <li>Select <strong>"Add to Home Screen"</strong></li>
+          <li>Tap <strong>"Add"</strong></li>
+        </ol>
+      `;
+    }
+    
+    modal.innerHTML = `
+      <div class="install-modal__backdrop"></div>
+      <div class="install-modal__content">
+        ${instructions}
+        <button class="install-modal__close">Got it</button>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Close handlers
+    const closeModal = () => modal.remove();
+    modal.querySelector(".install-modal__backdrop").addEventListener("click", closeModal);
+    modal.querySelector(".install-modal__close").addEventListener("click", closeModal);
+  };
+
   ui.navReconnect?.addEventListener("click", handleReconnectClick);
   ui.overlayConnectButton?.addEventListener("click", handleConnectClick);
+  
+  // PWA Install button
+  ui.navInstall?.addEventListener("click", handleInstallClick);
 
   ui.searchForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -430,8 +587,24 @@ function bindEvents() {
     copyToClipboard(state.activeContactKey, "Wallet address copied");
   });
 
+  ui.clearChatButton?.addEventListener("click", async () => {
+    if (!state.activeContactKey) return;
+    const confirmed = await showConfirmDialog(
+      "Clear chat",
+      "Are you sure you want to delete all messages in this chat? This action cannot be undone."
+    );
+    if (!confirmed) return;
+    await clearChatMessages(state.activeContactKey);
+    showToast("Chat cleared");
+  });
+
   ui.removeContactButton?.addEventListener("click", async () => {
     if (!state.activeContactKey) return;
+    const confirmed = await showConfirmDialog(
+      "Remove contact",
+      "Remove this contact and all messages? This action cannot be undone."
+    );
+    if (!confirmed) return;
     await deleteContact(state.activeContactKey);
     state.messages.delete(state.activeContactKey);
     state.activeContactKey = null;
@@ -605,16 +778,6 @@ function bindEvents() {
     updateForwardSelectionUI();
   });
 
-  ui.infoLocalName?.addEventListener("change", async (event) => {
-    if (!state.activeContactKey) return;
-    const value = event.target.value.trim();
-    await updateContact(state.activeContactKey, { localName: value, updatedAt: Date.now() });
-    updateContactInState(state.activeContactKey, { localName: value });
-    await refreshContacts(false);
-    updateConversationMeta(state.activeContactKey);
-    showToast("Saved");
-  });
-
   ui.nicknameForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     await handleNicknameSubmit(ui.nicknameInput, ui.nicknameHint, { closeOnSuccess: true });
@@ -627,6 +790,17 @@ function bindEvents() {
 
   ui.settingsSoundToggle?.addEventListener("change", (event) => {
     updateSettings({ soundEnabled: event.target.checked });
+  });
+
+  // Initialize session duration select with current value
+  if (ui.settingsSessionDuration) {
+    ui.settingsSessionDuration.value = String(getSessionDurationMs());
+  }
+
+  ui.settingsSessionDuration?.addEventListener("change", (event) => {
+    const durationMs = parseInt(event.target.value, 10);
+    setSessionDurationMs(durationMs);
+    showToast("Session duration updated. Reconnect wallet to apply.");
   });
 
   ui.logoutButton?.addEventListener("click", handleLogoutClick);
@@ -653,6 +827,59 @@ function showToast(message) {
       ui.toast.hidden = true;
     }, 200);
   }, 2400);
+}
+
+function showConfirmDialog(title, message) {
+  return new Promise((resolve) => {
+    const modal = document.createElement("div");
+    modal.className = "confirm-modal";
+    modal.innerHTML = `
+      <div class="confirm-modal__backdrop"></div>
+      <div class="confirm-modal__content">
+        <h3 class="confirm-modal__title">${title}</h3>
+        <p class="confirm-modal__message">${message}</p>
+        <div class="confirm-modal__actions">
+          <button type="button" class="confirm-modal__btn confirm-modal__btn--cancel">Cancel</button>
+          <button type="button" class="confirm-modal__btn confirm-modal__btn--confirm">Confirm</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const cleanup = (result) => {
+      modal.remove();
+      resolve(result);
+    };
+    
+    modal.querySelector(".confirm-modal__backdrop").addEventListener("click", () => cleanup(false));
+    modal.querySelector(".confirm-modal__btn--cancel").addEventListener("click", () => cleanup(false));
+    modal.querySelector(".confirm-modal__btn--confirm").addEventListener("click", () => cleanup(true));
+  });
+}
+
+async function clearChatMessages(pubkey) {
+  if (!pubkey) return;
+  
+  // Delete messages from IndexedDB
+  await deleteMessagesForContact(pubkey);
+  
+  // Clear from state
+  state.messages.set(pubkey, []);
+  
+  // Update UI
+  renderMessages(pubkey);
+  
+  // Update contact preview
+  const contact = state.contacts.find(c => c.pubkey === pubkey);
+  if (contact) {
+    await updateContact(pubkey, { lastMessage: null });
+    updateContactInState(pubkey, { lastMessage: null });
+    renderContactList();
+  }
+  
+  // Update message count in info panel
+  updateConversationMeta(pubkey);
 }
 
 function copyToClipboard(value, successMessage) {
@@ -1603,10 +1830,29 @@ function createMessageBubble(message, highlightQueryText) {
   textEl.className = "bubble__text";
 
   const text = message.text || "";
-  if (highlightQueryText) {
-    textEl.innerHTML = highlightQuery(text, highlightQueryText);
+  // Check if message is a pure pump.fun link (nothing else)
+  const isPurePumpLink = message.meta?.tokenPreview && isPureTokenLink(text);
+  const tokenUrl = message.meta?.tokenUrl || extractPumpFunUrl(text);
+
+  if (isPurePumpLink) {
+    // Pure link: transparent bubble, only token card visible
+    bubble.classList.add("bubble--token-only");
+    const tokenCard = createTokenPreviewBlock(message.meta.tokenPreview, tokenUrl);
+    bubble.appendChild(tokenCard);
   } else {
-    textEl.textContent = text;
+    // Normal message with text
+    if (highlightQueryText) {
+      textEl.innerHTML = highlightQuery(text, highlightQueryText);
+    } else {
+      textEl.innerHTML = linkifyText(text);
+    }
+    bubble.appendChild(textEl);
+    
+    // Add token card after text if present
+    if (message.meta?.tokenPreview) {
+      const tokenCard = createTokenPreviewBlock(message.meta.tokenPreview, tokenUrl);
+      bubble.appendChild(tokenCard);
+    }
   }
 
   const meta = document.createElement("div");
@@ -1620,7 +1866,6 @@ function createMessageBubble(message, highlightQueryText) {
     meta.appendChild(status);
   }
 
-  bubble.appendChild(textEl);
   bubble.appendChild(meta);
   return bubble;
 }
@@ -1684,6 +1929,244 @@ function createReplyPreviewBlock(replyMeta) {
   wrapper.appendChild(author);
   wrapper.appendChild(text);
   return wrapper;
+}
+
+function createTokenPreviewBlock(preview, tokenUrl = null) {
+  const card = document.createElement("div");
+  card.className = "pump-card";
+
+  // Top section: Image + Main info
+  const topSection = document.createElement("div");
+  topSection.className = "pump-card__top";
+
+  // Token image
+  const imgWrapper = document.createElement("div");
+  imgWrapper.className = "pump-card__avatar";
+  
+  if (preview.imageUrl) {
+    const img = document.createElement("img");
+    img.src = `/api/image-proxy?url=${encodeURIComponent(preview.imageUrl)}`;
+    img.alt = preview.symbol || '?';
+    img.onerror = function() {
+      this.style.display = 'none';
+      const fallback = document.createElement("div");
+      fallback.className = "pump-card__avatar-fallback";
+      fallback.textContent = (preview.symbol || '?')[0].toUpperCase();
+      imgWrapper.appendChild(fallback);
+    };
+    imgWrapper.appendChild(img);
+  } else {
+    const fallback = document.createElement("div");
+    fallback.className = "pump-card__avatar-fallback";
+    fallback.textContent = (preview.symbol || '?')[0].toUpperCase();
+    imgWrapper.appendChild(fallback);
+  }
+  topSection.appendChild(imgWrapper);
+
+  // Info section
+  const info = document.createElement("div");
+  info.className = "pump-card__info";
+
+  // Name row with 24h change
+  const nameRow = document.createElement("div");
+  nameRow.className = "pump-card__name-row";
+  const name = document.createElement("span");
+  name.className = "pump-card__name";
+  name.textContent = preview.name || 'Unknown';
+  nameRow.appendChild(name);
+  
+  if (preview.priceChange24h !== null && preview.priceChange24h !== undefined) {
+    const change = parseFloat(preview.priceChange24h);
+    const changeBadge = document.createElement("span");
+    changeBadge.className = `pump-card__change-main ${change >= 0 ? 'is-up' : 'is-down'}`;
+    changeBadge.textContent = formatPercentChange(preview.priceChange24h);
+    nameRow.appendChild(changeBadge);
+  }
+  info.appendChild(nameRow);
+
+  // Ticker
+  const ticker = document.createElement("div");
+  ticker.className = "pump-card__ticker";
+  ticker.textContent = `$${preview.symbol || '???'}`;
+  info.appendChild(ticker);
+
+  // MCap as main value with mini changes
+  const mcapRow = document.createElement("div");
+  mcapRow.className = "pump-card__mcap-row";
+  const mcapValue = document.createElement("span");
+  mcapValue.className = "pump-card__mcap";
+  mcapValue.textContent = formatNumber(preview.marketCap);
+  mcapRow.appendChild(mcapValue);
+
+  // Mini changes
+  if (preview.priceChange5m !== null || preview.priceChange1h !== null) {
+    const changes = document.createElement("div");
+    changes.className = "pump-card__changes";
+    if (preview.priceChange5m !== null) {
+      const c = parseFloat(preview.priceChange5m);
+      const el = document.createElement("span");
+      el.className = c >= 0 ? 'is-up' : 'is-down';
+      el.textContent = `5m ${formatPercentChange(preview.priceChange5m)}`;
+      changes.appendChild(el);
+    }
+    if (preview.priceChange1h !== null) {
+      const c = parseFloat(preview.priceChange1h);
+      const el = document.createElement("span");
+      el.className = c >= 0 ? 'is-up' : 'is-down';
+      el.textContent = `1h ${formatPercentChange(preview.priceChange1h)}`;
+      changes.appendChild(el);
+    }
+    mcapRow.appendChild(changes);
+  }
+  info.appendChild(mcapRow);
+
+  topSection.appendChild(info);
+  card.appendChild(topSection);
+
+  // Stats grid
+  const stats = document.createElement("div");
+  stats.className = "pump-card__stats";
+  stats.appendChild(createPumpStat("Price", formatPrice(preview.priceUsd)));
+  stats.appendChild(createPumpStat("Liq", formatNumber(preview.liquidity)));
+  stats.appendChild(createPumpStat("Vol", formatNumber(preview.volume24h)));
+  
+  // Buys/Sells (transaction count, not dollars)
+  if (preview.buys24h !== null || preview.sells24h !== null) {
+    const txnEl = document.createElement("div");
+    txnEl.className = "pump-card__stat";
+    const buys = preview.buys24h || 0;
+    const sells = preview.sells24h || 0;
+    txnEl.innerHTML = `<span class="pump-card__stat-label">Txns</span><span class="pump-card__stat-value"><em class="buy">${buys.toLocaleString()}</em> / <em class="sell">${sells.toLocaleString()}</em></span>`;
+    stats.appendChild(txnEl);
+  }
+  card.appendChild(stats);
+
+  // Bonding progress
+  if (preview.bondingProgress !== null && preview.bondingProgress !== undefined && !preview.isComplete) {
+    const progress = document.createElement("div");
+    progress.className = "pump-card__bonding";
+    progress.innerHTML = `
+      <div class="pump-card__bonding-bar"><div class="pump-card__bonding-fill" style="width:${Math.min(100, preview.bondingProgress)}%"></div></div>
+      <span class="pump-card__bonding-label">Bonding ${preview.bondingProgress.toFixed(0)}%</span>
+    `;
+    card.appendChild(progress);
+  }
+
+  // Footer: badges + socials + link
+  const footer = document.createElement("div");
+  footer.className = "pump-card__footer";
+
+  // Left: badges
+  const badgesLeft = document.createElement("div");
+  badgesLeft.className = "pump-card__badges";
+  
+  if (preview.dexId) {
+    const dex = document.createElement("span");
+    dex.className = "pump-card__badge pump-card__badge--dex";
+    dex.textContent = formatDexName(preview.dexId);
+    badgesLeft.appendChild(dex);
+  }
+  if (preview.createdAt) {
+    const age = document.createElement("span");
+    age.className = "pump-card__badge pump-card__badge--age";
+    age.textContent = formatAge(preview.createdAt);
+    badgesLeft.appendChild(age);
+  }
+  footer.appendChild(badgesLeft);
+
+  // Middle: socials
+  if (preview.socials && preview.socials.length > 0) {
+    const socials = document.createElement("div");
+    socials.className = "pump-card__socials";
+    const seenTypes = new Set();
+    for (const s of preview.socials) {
+      if (seenTypes.has(s.type)) continue;
+      seenTypes.add(s.type);
+      if (seenTypes.size > 3) break;
+      const link = document.createElement("a");
+      link.href = s.url.startsWith('http') ? s.url : `https://${s.url}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "pump-card__social";
+      link.innerHTML = getSocialIcon(s.type);
+      link.title = s.type;
+      socials.appendChild(link);
+    }
+    footer.appendChild(socials);
+  }
+
+  // Right: open link - determine the best URL based on source
+  const openLink = document.createElement("a");
+  openLink.className = "pump-card__open";
+  // Use tokenUrl if provided, otherwise construct based on available data
+  if (tokenUrl) {
+    openLink.href = tokenUrl;
+  } else if (preview.pairAddress) {
+    // DexScreener pair
+    openLink.href = `https://dexscreener.com/solana/${preview.pairAddress}`;
+  } else {
+    // Default to pump.fun
+    openLink.href = `https://pump.fun/coin/${preview.address}`;
+  }
+  openLink.target = "_blank";
+  openLink.rel = "noopener noreferrer";
+  openLink.innerHTML = `View <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+  footer.appendChild(openLink);
+
+  card.appendChild(footer);
+  return card;
+}
+
+function createPumpStat(label, value) {
+  const el = document.createElement("div");
+  el.className = "pump-card__stat";
+  el.innerHTML = `<span class="pump-card__stat-label">${label}</span><span class="pump-card__stat-value">${value}</span>`;
+  return el;
+}
+
+function createStatEl(label, value) {
+  const el = document.createElement("div");
+  el.className = "token-preview__stat";
+  el.innerHTML = `<span class="token-preview__stat-label">${label}</span><span class="token-preview__stat-value">${value}</span>`;
+  return el;
+}
+
+function formatDexName(dexId) {
+  const names = {
+    'raydium': 'Raydium',
+    'pumpfun': 'Pump.fun',
+    'orca': 'Orca',
+    'jupiter': 'Jupiter',
+    'meteora': 'Meteora',
+  };
+  return names[dexId?.toLowerCase()] || dexId || 'DEX';
+}
+
+function formatAge(timestamp) {
+  if (!timestamp) return '';
+  const now = Date.now();
+  const created = typeof timestamp === 'number' && timestamp < 1e12 ? timestamp * 1000 : timestamp;
+  const diff = now - created;
+  
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  
+  if (days > 0) return `${days}d`;
+  if (hours > 0) return `${hours}h`;
+  if (minutes > 0) return `${minutes}m`;
+  return 'new';
+}
+
+function getSocialIcon(type) {
+  const icons = {
+    twitter: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>', // X logo
+    x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',
+    telegram: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>',
+    website: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    discord: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286z"/></svg>',
+  };
+  return icons[type?.toLowerCase()] || icons.website;
 }
 
 function createForwardPreviewBlock(forwardMeta) {
@@ -2162,10 +2645,136 @@ function ensureForwardMeta(message) {
   return parsed.forward;
 }
 
-const highlightQuery = (text, query) => {
+// URL regex pattern for detecting links
+const URL_REGEX = /(\b(?:https?:\/\/|www\.)[^\s<>\"\']+)/gi;
+
+// Pump.fun URL pattern
+const PUMP_FUN_REGEX = /https?:\/\/(?:www\.)?pump\.fun\/(?:coin\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/i;
+const PUMP_FUN_URL_REGEX = /https?:\/\/(?:www\.)?pump\.fun\/(?:coin\/)?[1-9A-HJ-NP-Za-km-z]{32,44}/i;
+
+// DexScreener URL pattern (solana only for now)
+const DEXSCREENER_REGEX = /https?:\/\/(?:www\.)?dexscreener\.com\/solana\/([a-zA-Z0-9]{30,50})/i;
+const DEXSCREENER_URL_REGEX = /https?:\/\/(?:www\.)?dexscreener\.com\/solana\/[a-zA-Z0-9]{30,50}/i;
+
+// Terminal (Padre) URL pattern
+const TERMINAL_REGEX = /https?:\/\/(?:www\.)?trade\.padre\.gg\/trade\/solana\/([1-9A-HJ-NP-Za-km-z]{32,44})/i;
+const TERMINAL_URL_REGEX = /https?:\/\/(?:www\.)?trade\.padre\.gg\/trade\/solana\/[1-9A-HJ-NP-Za-km-z]{32,44}/i;
+
+// Axiom URL pattern (includes optional query params like ?chain=sol)
+const AXIOM_REGEX = /https?:\/\/(?:www\.)?axiom\.trade\/meme\/([1-9A-HJ-NP-Za-km-z]{32,44})(?:\?[^\s]*)?/i;
+const AXIOM_URL_REGEX = /https?:\/\/(?:www\.)?axiom\.trade\/meme\/[1-9A-HJ-NP-Za-km-z]{32,44}(?:\?[^\s]*)?/i;
+
+function extractPumpFunToken(text) {
+  const match = text.match(PUMP_FUN_REGEX);
+  return match ? match[1] : null;
+}
+
+function extractDexScreenerPair(text) {
+  const match = text.match(DEXSCREENER_REGEX);
+  return match ? match[1] : null;
+}
+
+function extractTerminalToken(text) {
+  const match = text.match(TERMINAL_REGEX);
+  return match ? match[1] : null;
+}
+
+function extractAxiomPair(text) {
+  const match = text.match(AXIOM_REGEX);
+  return match ? match[1] : null;
+}
+
+function extractPumpFunUrl(text) {
+  const match = text.match(PUMP_FUN_URL_REGEX);
+  return match ? match[0] : null;
+}
+
+function extractDexScreenerUrl(text) {
+  const match = text.match(DEXSCREENER_URL_REGEX);
+  return match ? match[0] : null;
+}
+
+function extractTerminalUrl(text) {
+  const match = text.match(TERMINAL_URL_REGEX);
+  return match ? match[0] : null;
+}
+
+function extractAxiomUrl(text) {
+  const match = text.match(AXIOM_URL_REGEX);
+  return match ? match[0] : null;
+}
+
+function extractTokenUrl(text) {
+  return extractPumpFunUrl(text) || extractDexScreenerUrl(text) || extractTerminalUrl(text) || extractAxiomUrl(text);
+}
+
+function isPureTokenLink(text) {
+  // Check if text is ONLY a token link (pump.fun, dexscreener, terminal, or axiom) with optional whitespace
+  const trimmed = text.trim();
+  const isPumpFun = PUMP_FUN_URL_REGEX.test(trimmed) && trimmed.replace(PUMP_FUN_URL_REGEX, '').trim() === '';
+  const isDexScreener = DEXSCREENER_URL_REGEX.test(trimmed) && trimmed.replace(DEXSCREENER_URL_REGEX, '').trim() === '';
+  const isTerminal = TERMINAL_URL_REGEX.test(trimmed) && trimmed.replace(TERMINAL_URL_REGEX, '').trim() === '';
+  const isAxiom = AXIOM_URL_REGEX.test(trimmed) && trimmed.replace(AXIOM_URL_REGEX, '').trim() === '';
+  return isPumpFun || isDexScreener || isTerminal || isAxiom;
+}
+
+async function fetchTokenPreviewSafe(tokenAddress) {
+  try {
+    const response = await fetchTokenPreview(tokenAddress);
+    return response?.preview || null;
+  } catch (error) {
+    console.warn('Failed to fetch token preview:', error);
+    return null;
+  }
+}
+
+async function fetchDexPairPreviewSafe(pairAddress) {
+  try {
+    const response = await fetchDexPairPreview(pairAddress);
+    return response || null;
+  } catch (error) {
+    console.warn('Failed to fetch DexScreener pair preview:', error);
+    return null;
+  }
+}
+
+function formatNumber(num) {
+  if (!num || isNaN(num)) return '—';
+  const n = parseFloat(num);
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
+function formatPrice(price) {
+  if (!price || isNaN(price)) return '—';
+  const p = parseFloat(price);
+  if (p < 0.00001) return `$${p.toExponential(2)}`;
+  if (p < 0.01) return `$${p.toFixed(6)}`;
+  if (p < 1) return `$${p.toFixed(4)}`;
+  return `$${p.toFixed(2)}`;
+}
+
+function formatPercentChange(change) {
+  if (!change || isNaN(change)) return '';
+  const c = parseFloat(change);
+  const sign = c >= 0 ? '+' : '';
+  return `${sign}${c.toFixed(1)}%`;
+}
+
+function linkifyText(text) {
   const safe = escapeHtml(text);
+  return safe.replace(URL_REGEX, (url) => {
+    const href = url.startsWith('www.') ? `https://${url}` : url;
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="bubble__link">${url}</a>`;
+  });
+}
+
+const highlightQuery = (text, query) => {
+  const linked = linkifyText(text);
   const regex = new RegExp(`(${escapeRegExp(query)})`, "gi");
-  return safe.replace(regex, "<mark>$1</mark>");
+  return linked.replace(regex, "<mark>$1</mark>");
 };
 
 function escapeHtml(text) {
@@ -2302,7 +2911,56 @@ async function handleLogoutClick() {
 
 async function handleExportData() {
   try {
-    const dump = await exportLocalData();
+    const currentWallet = latestAppState?.walletPubkey || state.currentWallet;
+    if (!currentWallet) {
+      showToast("Connect wallet first");
+      return;
+    }
+    
+    const provider = getProviderInstance();
+    const isMobile = isMobileDevice();
+    
+    // Check if we can sign
+    if (!provider?.signMessage && !isMobile) {
+      showToast("Wallet not available for signing");
+      return;
+    }
+    
+    // Get raw data without signature
+    const dump = await exportLocalData(currentWallet);
+    
+    // Create message to sign (text, not binary)
+    const dataToSign = JSON.stringify({
+      version: dump.version,
+      exportedAt: dump.exportedAt,
+      ownerWallet: dump.ownerWallet,
+      contactsCount: dump.contacts?.length || 0,
+      messagesCount: dump.messages?.length || 0,
+    });
+    
+    const messageText = `SOLink Backup Verification\n\nThis signature proves ownership of this backup.\n\nData: ${dataToSign}`;
+    const messageBytes = new TextEncoder().encode(messageText);
+    
+    let signatureBase58;
+    
+    if (isMobile && hasMobileSession()) {
+      // For mobile, we skip signing for now (TODO: implement mobile signing)
+      showToast("Mobile backup signing not yet supported");
+      return;
+    } else if (provider?.signMessage) {
+      // Desktop wallet signing
+      const signed = await provider.signMessage(messageBytes, 'utf8');
+      const signature = 'signature' in signed ? signed.signature : signed;
+      signatureBase58 = encodeBase58(signature);
+    } else {
+      showToast("Cannot sign backup");
+      return;
+    }
+    
+    // Add signature to dump
+    dump.signature = signatureBase58;
+    dump.signedMessage = messageText;
+    
     const blob = new Blob([JSON.stringify(dump, null, 2)], {
       type: "application/json",
     });
@@ -2314,10 +2972,53 @@ async function handleExportData() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast("Backup exported");
+    showToast("Backup exported & signed");
   } catch (error) {
     console.error("Export failed", error);
-    showToast("Export failed");
+    if (error.message?.includes('User rejected')) {
+      showToast("Signing cancelled");
+    } else {
+      showToast("Export failed");
+    }
+  }
+}
+
+async function verifyBackupSignature(parsed, expectedWallet) {
+  // If no signature, it's an old backup - check wallet match only
+  if (!parsed.signature || !parsed.signedMessage) {
+    console.log('[Import] No signature in backup, checking wallet only');
+    if (parsed.ownerWallet && parsed.ownerWallet !== expectedWallet) {
+      return { valid: false, reason: 'WALLET_MISMATCH' };
+    }
+    return { valid: true, reason: 'NO_SIGNATURE' };
+  }
+  
+  // Verify wallet matches
+  if (parsed.ownerWallet !== expectedWallet) {
+    return { valid: false, reason: 'WALLET_MISMATCH' };
+  }
+  
+  try {
+    // Recreate the message bytes
+    const messageBytes = new TextEncoder().encode(parsed.signedMessage);
+    
+    // Decode signature and public key
+    const signatureBytes = decodeBase58(parsed.signature);
+    const publicKeyBytes = decodeBase58(parsed.ownerWallet);
+    
+    // Verify signature using nacl
+    const isValid = nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes);
+    
+    if (!isValid) {
+      console.warn('[Import] Signature verification failed');
+      return { valid: false, reason: 'INVALID_SIGNATURE' };
+    }
+    
+    console.log('[Import] Signature verified successfully');
+    return { valid: true, reason: 'VERIFIED' };
+  } catch (error) {
+    console.error('[Import] Signature verification error:', error);
+    return { valid: false, reason: 'VERIFICATION_ERROR' };
   }
 }
 
@@ -2325,6 +3026,12 @@ function handleImportFileChange(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
+
+  const currentWallet = latestAppState?.walletPubkey || state.currentWallet;
+  if (!currentWallet) {
+    showToast("Connect wallet first");
+    return;
+  }
 
   if (hasWindow && !window.confirm("Importing will replace your current local data. Continue?")) {
     return;
@@ -2334,12 +3041,32 @@ function handleImportFileChange(event) {
   reader.onload = async () => {
     try {
       const parsed = JSON.parse(reader.result);
-      await importLocalData(parsed);
+      
+      // Verify backup signature
+      const verification = await verifyBackupSignature(parsed, currentWallet);
+      
+      if (!verification.valid) {
+        console.warn('[Import] Verification failed:', verification.reason);
+        if (verification.reason === 'WALLET_MISMATCH') {
+          showToast("Backup belongs to a different wallet");
+        } else if (verification.reason === 'INVALID_SIGNATURE') {
+          showToast("Backup signature is invalid or tampered");
+        } else {
+          showToast("Backup verification failed");
+        }
+        return;
+      }
+      
+      await importLocalData(parsed, currentWallet);
       showToast("Backup imported");
       setTimeout(() => window.location.reload(), 400);
     } catch (error) {
       console.error("Import failed", error);
-      showToast("Import failed");
+      if (error.message === "WALLET_MISMATCH") {
+        showToast("Backup belongs to a different wallet");
+      } else {
+        showToast("Import failed");
+      }
     }
   };
   reader.onerror = () => {
@@ -2560,6 +3287,8 @@ async function sendPreparedMessage({
   outboundText,
   replyMeta,
   forwardMeta,
+  tokenPreview,
+  tokenUrl,
 }) {
   if (!targetPubkey) {
     showToast("Select a chat first");
@@ -2586,6 +3315,7 @@ async function sendPreparedMessage({
     to: normalized,
     text: effectiveOutbound,
     timestamp,
+    ...(tokenPreview ? { tokenPreview } : {}),
   };
   const sessionSecret = await ensureSessionSecret(normalized);
   if (sessionSecret) {
@@ -2598,6 +3328,7 @@ async function sendPreparedMessage({
         nonce: encrypted.nonce,
         version: encrypted.version,
         timestamp,
+        ...(tokenPreview ? { tokenPreview } : {}),
       };
     }
   }
@@ -2614,6 +3345,7 @@ async function sendPreparedMessage({
       ciphertext: encryptionMeta ? sendPayload.ciphertext : null,
       ...(replyMeta ? { replyTo: replyMeta } : {}),
       ...(forwardMeta ? { forwardedFrom: forwardMeta } : {}),
+      ...(tokenPreview ? { tokenPreview, tokenUrl } : {}),
     },
   };
 
@@ -2674,11 +3406,45 @@ async function handleSendMessage(text) {
     clearReplyContext();
   }
 
+  // Check for pump.fun, DexScreener, Terminal, or Axiom link and fetch token preview
+  let tokenPreview = null;
+  let tokenUrl = null;
+  
+  // First check pump.fun (uses token address)
+  const pumpFunAddress = extractPumpFunToken(trimmed);
+  if (pumpFunAddress) {
+    tokenPreview = await fetchTokenPreviewSafe(pumpFunAddress);
+    tokenUrl = extractPumpFunUrl(trimmed);
+  } else {
+    // Then check DexScreener (uses pair address)
+    const dexPairAddress = extractDexScreenerPair(trimmed);
+    if (dexPairAddress) {
+      tokenPreview = await fetchDexPairPreviewSafe(dexPairAddress);
+      tokenUrl = extractDexScreenerUrl(trimmed);
+    } else {
+      // Check Terminal (uses pair address)
+      const terminalPairAddress = extractTerminalToken(trimmed);
+      if (terminalPairAddress) {
+        tokenPreview = await fetchDexPairPreviewSafe(terminalPairAddress);
+        tokenUrl = extractTerminalUrl(trimmed);
+      } else {
+        // Finally check Axiom (uses pair address)
+        const axiomPairAddress = extractAxiomPair(trimmed);
+        if (axiomPairAddress) {
+          tokenPreview = await fetchDexPairPreviewSafe(axiomPairAddress);
+          tokenUrl = extractAxiomUrl(trimmed);
+        }
+      }
+    }
+  }
+
   await sendPreparedMessage({
     targetPubkey: state.activeContactKey,
     displayText: trimmed,
     outboundText: replyEnvelope?.text,
     replyMeta: replyEnvelope?.reply,
+    tokenPreview,
+    tokenUrl,
   });
 }
 
@@ -2802,6 +3568,11 @@ async function handleIncomingMessages(messages) {
         ...(forwardMeta
           ? {
               forwardedFrom: forwardMeta,
+            }
+          : {}),
+        ...(payload.tokenPreview
+          ? {
+              tokenPreview: payload.tokenPreview,
             }
           : {}),
       },
@@ -2928,6 +3699,274 @@ function handleMobileBack() {
   hideMobileChat();
 }
 
+// PWA Install functionality
+const PWA_TOOLTIP_SHOWN_KEY = "solink_install_tooltip_shown";
+const PWA_INSTALLED_KEY = "solink_app_installed";
+
+// Backup reminder
+const BACKUP_REMINDER_KEY = "solink_last_backup_reminder";
+const BACKUP_REMINDER_INTERVAL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function initPWA() {
+  const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
+  const wasInstalled = localStorage.getItem(PWA_INSTALLED_KEY) === "true";
+  
+  // Check if already installed (standalone mode)
+  if (isStandalone || wasInstalled) {
+    console.log("[PWA] Running in standalone mode or already installed");
+    if (ui.navInstall) {
+      ui.navInstall.setAttribute("hidden", "");
+    }
+    return;
+  }
+
+  // Firefox doesn't support PWA install
+  if (isFirefox) {
+    console.log("[PWA] Firefox detected - manual install option available");
+    if (ui.navInstall) {
+      ui.navInstall.removeAttribute("hidden");
+      ui.navInstall.dataset.browser = "firefox";
+    }
+    return;
+  }
+
+  // Safari needs manual "Add to Home Screen"
+  if (isSafari) {
+    console.log("[PWA] Safari detected - manual install option available");
+    if (ui.navInstall) {
+      ui.navInstall.removeAttribute("hidden");
+      ui.navInstall.dataset.browser = "safari";
+    }
+    return;
+  }
+
+  // Listen for the beforeinstallprompt event (Chromium browsers)
+  window.addEventListener("beforeinstallprompt", (e) => {
+    // Prevent the mini-infobar from appearing on mobile
+    e.preventDefault();
+    // Save the event for later use
+    deferredInstallPrompt = e;
+    // Show the install button (but don't show promotion yet - wait for wallet connect)
+    if (ui.navInstall) {
+      ui.navInstall.removeAttribute("hidden");
+      ui.navInstall.dataset.browser = "chromium";
+    }
+    console.log("[PWA] Install prompt ready");
+  });
+
+  // Listen for successful installation
+  window.addEventListener("appinstalled", () => {
+    console.log("[PWA] App installed successfully");
+    deferredInstallPrompt = null;
+    localStorage.setItem(PWA_INSTALLED_KEY, "true");
+    hideInstallPromotion();
+    if (ui.navInstall) {
+      ui.navInstall.setAttribute("hidden", "");
+    }
+    showToast("SOLink installed! 🚀");
+  });
+}
+
+function showInstallPromotion() {
+  if (!ui.navInstall) return;
+  
+  const tooltipShown = localStorage.getItem(PWA_TOOLTIP_SHOWN_KEY) === "true";
+  
+  // Add pulsing animation
+  ui.navInstall.classList.add("is-pulsing");
+  
+  // Stop pulsing after 25 seconds
+  setTimeout(() => {
+    ui.navInstall.classList.remove("is-pulsing");
+  }, 25000);
+  
+  // Show tooltip only once (first visit)
+  if (!tooltipShown) {
+    // Create tooltip
+    const tooltip = document.createElement("div");
+    tooltip.className = "install-tooltip";
+    tooltip.innerHTML = `
+      <button class="install-tooltip__close" aria-label="Close">×</button>
+      <span class="install-tooltip__text">Install SOLink as app</span>
+      <span class="install-tooltip__hint">Quick access & better experience</span>
+    `;
+    
+    ui.navInstall.style.position = "relative";
+    ui.navInstall.appendChild(tooltip);
+    
+    // Show tooltip after a short delay
+    setTimeout(() => {
+      tooltip.classList.add("is-visible");
+    }, 1500);
+    
+    // Close button handler
+    tooltip.querySelector(".install-tooltip__close").addEventListener("click", (e) => {
+      e.stopPropagation();
+      tooltip.classList.remove("is-visible");
+      localStorage.setItem(PWA_TOOLTIP_SHOWN_KEY, "true");
+      setTimeout(() => tooltip.remove(), 300);
+    });
+    
+    // Auto-hide after 15 seconds
+    setTimeout(() => {
+      if (tooltip.classList.contains("is-visible")) {
+        tooltip.classList.remove("is-visible");
+        localStorage.setItem(PWA_TOOLTIP_SHOWN_KEY, "true");
+        setTimeout(() => tooltip.remove(), 300);
+      }
+    }, 15000);
+  }
+}
+
+function hideInstallPromotion() {
+  if (!ui.navInstall) return;
+  
+  // Remove pulsing
+  ui.navInstall.classList.remove("is-pulsing");
+  
+  // Remove tooltip if exists
+  const tooltip = ui.navInstall.querySelector(".install-tooltip");
+  if (tooltip) {
+    tooltip.classList.remove("is-visible");
+    setTimeout(() => tooltip.remove(), 300);
+  }
+}
+
+// Backup reminder functionality
+const BACKUP_REMINDER_DELAY = 10 * 60 * 1000; // 10 minutes after authorization
+
+// Expose for testing in console
+window.testBackupReminder = function() {
+  localStorage.removeItem(BACKUP_REMINDER_KEY);
+  showBackupReminder();
+};
+
+function checkBackupReminder() {
+  const lastReminder = localStorage.getItem(BACKUP_REMINDER_KEY);
+  const now = Date.now();
+  
+  // Check if enough time has passed since last reminder
+  if (lastReminder && (now - parseInt(lastReminder, 10)) < BACKUP_REMINDER_INTERVAL) {
+    return;
+  }
+  
+  // Check if user has any contacts (no need to remind if empty)
+  if (state.contacts.length === 0) {
+    return;
+  }
+  
+  // Show reminder after 10 minutes
+  setTimeout(() => {
+    // Re-check conditions in case things changed
+    if (state.contacts.length > 0) {
+      showBackupReminder();
+    }
+  }, BACKUP_REMINDER_DELAY);
+}
+
+function showBackupReminder() {
+  // Don't show if already showing
+  if (document.querySelector(".backup-toast")) return;
+  
+  const toast = document.createElement("div");
+  toast.className = "backup-toast";
+  toast.innerHTML = `
+    <div class="backup-toast__icon">🔐</div>
+    <div class="backup-toast__content">
+      <div class="backup-toast__title">Backup your conversations</div>
+      <p class="backup-toast__text">
+        Your messages are <strong>end-to-end encrypted</strong> and stored only on your device. 
+        We can't recover them — only you can back them up.
+      </p>
+      <p class="backup-toast__text backup-toast__text--warning">
+        Clearing browser data <strong>may lead to data loss</strong>.
+      </p>
+      <p class="backup-toast__hint">This reminder appears once a week</p>
+    </div>
+    <div class="backup-toast__actions">
+      <button type="button" class="backup-toast__btn backup-toast__btn--secondary" data-action="remind-later">
+        Later
+      </button>
+      <button type="button" class="backup-toast__btn" data-action="backup-now">
+        Backup
+      </button>
+    </div>
+  `;
+  
+  document.body.appendChild(toast);
+  
+  // Animate in
+  requestAnimationFrame(() => {
+    toast.classList.add("is-visible");
+  });
+  
+  const closeToast = () => {
+    toast.classList.remove("is-visible");
+    setTimeout(() => toast.remove(), 300);
+  };
+  
+  // Remind later - snooze for 7 days
+  toast.querySelector("[data-action='remind-later']").addEventListener("click", () => {
+    localStorage.setItem(BACKUP_REMINDER_KEY, Date.now().toString());
+    closeToast();
+  });
+  
+  // Backup now - trigger export and close
+  toast.querySelector("[data-action='backup-now']").addEventListener("click", async () => {
+    localStorage.setItem(BACKUP_REMINDER_KEY, Date.now().toString());
+    closeToast();
+    await handleExportData();
+  });
+  
+  // Auto-hide after 30 seconds
+  setTimeout(() => {
+    if (document.body.contains(toast)) {
+      localStorage.setItem(BACKUP_REMINDER_KEY, Date.now().toString());
+      closeToast();
+    }
+  }, 30000);
+}
+
+// Smart scrollbar - shows only when mouse is near the edge
+function initSmartScrollbar() {
+  const scrollableElements = document.querySelectorAll('.chat-list, .timeline, .info-panel');
+  const EDGE_THRESHOLD = 50; // pixels from right edge
+  
+  scrollableElements.forEach(el => {
+    let hideTimeout = null;
+    
+    el.addEventListener('mousemove', (e) => {
+      const rect = el.getBoundingClientRect();
+      const distanceFromRight = rect.right - e.clientX;
+      
+      if (distanceFromRight <= EDGE_THRESHOLD) {
+        el.classList.add('scrollbar-visible');
+        if (hideTimeout) {
+          clearTimeout(hideTimeout);
+          hideTimeout = null;
+        }
+      } else {
+        if (!hideTimeout) {
+          hideTimeout = setTimeout(() => {
+            el.classList.remove('scrollbar-visible');
+            hideTimeout = null;
+          }, 900);
+        }
+      }
+    });
+    
+    el.addEventListener('mouseleave', () => {
+      if (hideTimeout) clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        el.classList.remove('scrollbar-visible');
+        hideTimeout = null;
+      }, 500);
+    });
+  });
+}
+
 function initMobileNavigation() {
   const mobileNav = document.querySelector("[data-role=\"mobile-nav\"]");
   if (!mobileNav) return;
@@ -2978,7 +4017,6 @@ const mobileInfoUI = {
   avatar: null,
   name: null,
   pubkey: null,
-  localName: null,
   favoriteLabel: null,
   saveLabel: null,
   paymentAmount: null,
@@ -2991,7 +4029,6 @@ function cacheMobileInfoUI() {
   mobileInfoUI.avatar = document.querySelector("[data-role=\"mobile-info-avatar\"]");
   mobileInfoUI.name = document.querySelector("[data-role=\"mobile-info-name\"]");
   mobileInfoUI.pubkey = document.querySelector("[data-role=\"mobile-info-pubkey\"]");
-  mobileInfoUI.localName = document.querySelector("[data-role=\"mobile-info-local-name\"]");
   mobileInfoUI.favoriteLabel = document.querySelector("[data-role=\"mobile-favorite-label\"]");
   mobileInfoUI.saveLabel = document.querySelector("[data-role=\"mobile-save-label\"]");
   mobileInfoUI.paymentAmount = document.querySelector("[data-role=\"mobile-payment-amount\"]");
@@ -3012,10 +4049,6 @@ function openMobileInfoSheet() {
   
   if (mobileInfoUI.avatar) {
     setAvatar(mobileInfoUI.avatar, contact.pubkey, 56, displayName);
-  }
-  
-  if (mobileInfoUI.localName) {
-    mobileInfoUI.localName.value = contact.localName || "";
   }
   
   // Update labels
@@ -3039,18 +4072,9 @@ function closeMobileInfoSheet() {
 }
 
 async function handleMobileLocalNameChange() {
-  if (!state.activeContactKey || !mobileInfoUI.localName) return;
-  
-  const newName = mobileInfoUI.localName.value.trim();
-  await updateContact(state.activeContactKey, { localName: newName, updatedAt: Date.now() });
-  updateContactInState(state.activeContactKey, { localName: newName });
-  updateContactHeader();
+  // Function kept for compatibility but no longer used
   refreshContacts(false);
   
-  // Also update desktop info panel
-  if (ui.infoLocalName) {
-    ui.infoLocalName.value = newName;
-  }
 }
 
 async function handleMobileToggleFavorite() {
@@ -3093,12 +4117,28 @@ function handleMobileCopyWallet() {
   });
 }
 
+async function handleMobileClearChat() {
+  if (!state.activeContactKey) return;
+  
+  const confirmed = await showConfirmDialog(
+    "Clear chat",
+    "Are you sure you want to delete all messages in this chat? This action cannot be undone."
+  );
+  if (!confirmed) return;
+  
+  await clearChatMessages(state.activeContactKey);
+  closeMobileInfoSheet();
+  showToast("Chat cleared");
+}
+
 async function handleMobileRemoveContact() {
   if (!state.activeContactKey) return;
   
-  if (hasWindow && !window.confirm("Remove this contact and all messages?")) {
-    return;
-  }
+  const confirmed = await showConfirmDialog(
+    "Remove contact",
+    "Remove this contact and all messages? This action cannot be undone."
+  );
+  if (!confirmed) return;
   
   const pubkey = state.activeContactKey;
   closeMobileInfoSheet();
@@ -3132,14 +4172,11 @@ function initMobileInfoSheet() {
   // Close on backdrop click
   mobileInfoUI.backdrop?.addEventListener("click", closeMobileInfoSheet);
   
-  // Local name change
-  mobileInfoUI.localName?.addEventListener("change", handleMobileLocalNameChange);
-  mobileInfoUI.localName?.addEventListener("blur", handleMobileLocalNameChange);
-  
   // Action buttons
   document.querySelector("[data-action=\"mobile-toggle-favorite\"]")?.addEventListener("click", handleMobileToggleFavorite);
   document.querySelector("[data-action=\"mobile-toggle-save\"]")?.addEventListener("click", handleMobileToggleSave);
   document.querySelector("[data-action=\"mobile-copy-wallet\"]")?.addEventListener("click", handleMobileCopyWallet);
+  document.querySelector("[data-action=\"mobile-clear-chat\"]")?.addEventListener("click", handleMobileClearChat);
   document.querySelector("[data-action=\"mobile-remove-contact\"]")?.addEventListener("click", handleMobileRemoveContact);
   
   // Payment - sync with main payment handler
@@ -3172,7 +4209,6 @@ function ensureInfoPanelElements() {
   if (!ui.infoPanel) ui.infoPanel = document.querySelector("[data-role=\"info-panel\"]");
   if (!ui.infoName) ui.infoName = document.querySelector("[data-role=\"info-name\"]");
   if (!ui.infoPubkey) ui.infoPubkey = document.querySelector("[data-role=\"info-pubkey\"]");
-  if (!ui.infoLocalName) ui.infoLocalName = document.querySelector("[data-role=\"info-local-name\"]");
   if (!ui.infoMessageCount) ui.infoMessageCount = document.querySelector("[data-role=\"info-message-count\"]");
   if (!ui.infoFirstSeen) ui.infoFirstSeen = document.querySelector("[data-role=\"info-first-seen\"]");
   if (!ui.infoAvatar) ui.infoAvatar = document.querySelector("[data-role=\"info-avatar\"]");
@@ -3192,11 +4228,11 @@ function updateConversationMeta(pubkey) {
     ui.infoPanel.classList.remove("has-contact");
     setTextContent(ui.infoName, "No chat selected");
     setTextContent(ui.infoPubkey, "");
-    if (ui.infoLocalName) ui.infoLocalName.value = "";
     setTextContent(ui.infoMessageCount, "0");
     setTextContent(ui.infoFirstSeen, "—");
     if (ui.infoAvatar) setAvatar(ui.infoAvatar, "solink", 62, "SOLink");
     ui.copyContactLinkButton?.setAttribute("disabled", "disabled");
+    ui.clearChatButton?.setAttribute("disabled", "disabled");
     ui.removeContactButton?.setAttribute("disabled", "disabled");
     ui.toggleFavoriteButton?.setAttribute("disabled", "disabled");
     ui.saveContactButton?.setAttribute("disabled", "disabled");
@@ -3209,12 +4245,12 @@ function updateConversationMeta(pubkey) {
   ui.infoPanel.classList.add("has-contact");
   setTextContent(ui.infoName, contact?.localName || shortenPubkey(pubkey, 6));
   setTextContent(ui.infoPubkey, shortenPubkey(pubkey, 6));
-  if (ui.infoLocalName) ui.infoLocalName.value = contact?.localName || "";
   setTextContent(ui.infoMessageCount, String(messages.length));
   setTextContent(ui.infoFirstSeen, messages[0] ? formatDate(messages[0].timestamp) : "—");
   if (ui.infoAvatar) setAvatar(ui.infoAvatar, pubkey, 62, getContactAvatarLabel(contact) || pubkey);
 
   ui.copyContactLinkButton?.removeAttribute("disabled");
+  ui.clearChatButton?.removeAttribute("disabled");
   ui.removeContactButton?.removeAttribute("disabled");
   ui.toggleFavoriteButton?.removeAttribute("disabled");
   setTextContent(ui.toggleFavoriteButton, contact?.pinned ? "Unmark favorite" : "Mark favorite");
@@ -3321,10 +4357,7 @@ async function initializeProfile() {
 
   state.profile = profile;
   updateProfileHeader();
-
-  if (!profile.nickname) {
-    openNicknameModal();
-  }
+  // Don't open nickname modal here - wait for server sync in syncProfileFromServer()
 }
 
 async function syncProfileFromServer() {
@@ -3455,6 +4488,7 @@ function validateNickname(value) {
 function showOnboardingStep(step) {
   if (!ui.onboarding) return;
   ui.onboarding.hidden = false;
+  ui.onboarding.style.display = ''; // Remove inline display:none
   ui.onboarding
     .querySelectorAll(".onboarding__step")
     .forEach((node) => node.classList.toggle("is-active", node.dataset.step === step));
@@ -3567,6 +4601,10 @@ async function handleAppStateChange(appState) {
     if (!state.hasFetchedProfile) {
       await syncProfileFromServer();
       state.hasFetchedProfile = true;
+      // Show install promotion after first successful auth
+      showInstallPromotion();
+      // Check if backup reminder is needed
+      checkBackupReminder();
     }
     await publishEncryptionKey();
     await refreshContacts();
@@ -3655,12 +4693,14 @@ async function checkPendingMobilePayment() {
 
 async function initialize() {
   cacheDom();
+  initPWA();
   setActiveNav(state.activeNav);
   setSidebarView(state.sidebarView);
   bindEvents();
   initializeEmojiPicker();
   initMobileNavigation();
   initMobileInfoSheet();
+  initSmartScrollbar();
   handleMessageInput();
   toggleComposer(false);
   registerDebugHelpers();

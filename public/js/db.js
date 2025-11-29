@@ -125,6 +125,27 @@ export async function deleteMessage(id) {
   return true;
 }
 
+export async function deleteMessagesForContact(contactKey) {
+  if (!contactKey) return;
+  return withStore(MESSAGES_STORE, 'readwrite', (store) => {
+    const index = store.index('byContact');
+    const request = index.openCursor(IDBKeyRange.only(contactKey));
+    
+    return new Promise((resolve, reject) => {
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (cursor) {
+          cursor.delete();
+          cursor.continue();
+        } else {
+          resolve();
+        }
+      };
+      request.onerror = () => reject(request.error);
+    });
+  });
+}
+
 export async function setMessageStatus(id, status) {
   return withStore(MESSAGES_STORE, 'readwrite', (store) => {
     const request = store.get(id);
@@ -308,7 +329,7 @@ async function putRecords(storeName, records = []) {
   });
 }
 
-export async function exportLocalData() {
+export async function exportLocalData(ownerWallet = null) {
   const [contacts, messages, encryptionStore] = await Promise.all([
     getContacts(),
     getAllRecords(MESSAGES_STORE),
@@ -318,6 +339,7 @@ export async function exportLocalData() {
   return {
     version: 1,
     exportedAt: Date.now(),
+    ownerWallet: ownerWallet || null,
     contacts,
     messages,
     profile,
@@ -325,10 +347,20 @@ export async function exportLocalData() {
   };
 }
 
-export async function importLocalData(dump = {}) {
+export async function importLocalData(dump = {}, currentWallet = null) {
   if (!dump || typeof dump !== 'object') {
     throw new Error('Import payload is invalid');
   }
+  
+  // Check wallet ownership if backup contains ownerWallet
+  console.log('[Import] Backup ownerWallet:', dump.ownerWallet);
+  console.log('[Import] Current wallet:', currentWallet);
+  
+  if (dump.ownerWallet && currentWallet && dump.ownerWallet !== currentWallet) {
+    console.warn('[Import] Wallet mismatch! Blocking import.');
+    throw new Error('WALLET_MISMATCH');
+  }
+  
   await clearDatabase();
 
   if (Array.isArray(dump.contacts)) {

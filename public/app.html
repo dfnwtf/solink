@@ -2,12 +2,41 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>SOLink Messenger</title>
-    <link rel="stylesheet" href="./css/style.css?v=20241128" />
+    
+    <!-- Primary Meta Tags -->
+    <title>SOLink — Web3 Messenger</title>
+    <meta name="title" content="SOLink — Web3 Messenger" />
+    <meta name="description" content="Secure, decentralized messaging on Solana. Connect your Phantom wallet to start chatting." />
+    <meta name="robots" content="noindex, nofollow" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#0a090e" />
+    <meta name="msapplication-TileColor" content="#0a090e" />
+    
+    <!-- PWA / Mobile App -->
+    <meta name="application-name" content="SOLink" />
+    <meta name="apple-mobile-web-app-title" content="SOLink" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
+    
+    <!-- Critical CSS to prevent flash of onboarding modal -->
+    <style>
+      .onboarding[hidden], .connect-overlay[hidden] { display: none !important; }
+      .onboarding { display: none; }
+    </style>
+    
+    <link rel="stylesheet" href="./css/style.css?v=20241130z" />
     <script type="importmap">
       {
         "imports": {
@@ -63,6 +92,16 @@
           </button>
         </nav>
         <div class="nav-rail__footer">
+          <button
+            type="button"
+            class="nav-rail__install"
+            data-action="install-app"
+            aria-label="Install app"
+            title="Install SOLink as app"
+            hidden
+          >
+            <span class="icon icon-download"></span>
+          </button>
           <button
             type="button"
             class="nav-rail__connect"
@@ -167,6 +206,24 @@
             </div>
             <div class="settings-option">
               <div class="settings-option__meta">
+                <div class="settings-option__title">
+                  Session duration
+                  <span class="settings-tooltip" data-tooltip="How long the messenger stays connected without requiring wallet re-authentication. Longer sessions are more convenient, shorter are more secure.">?</span>
+                </div>
+                <p class="settings-option__description">Auto-disconnect after this time.</p>
+              </div>
+              <select class="settings-select" data-role="settings-session-duration">
+                <option value="900000">15 min</option>
+                <option value="1800000">30 min</option>
+                <option value="3600000" selected>1 hour</option>
+                <option value="7200000">2 hours</option>
+                <option value="14400000">4 hours</option>
+                <option value="28800000">8 hours</option>
+                <option value="43200000">12 hours</option>
+              </select>
+            </div>
+            <div class="settings-option">
+              <div class="settings-option__meta">
                 <div class="settings-option__title">Backup &amp; restore</div>
                 <p class="settings-option__description">Export or import your contacts and chats locally.</p>
               </div>
@@ -265,16 +322,15 @@
               <div class="contact-status" data-role="info-pubkey"></div>
             </div>
           </div>
-          <form class="info-panel__form">
-            <label>
-              Local name
-              <input type="text" placeholder="Add alias" data-role="info-local-name" autocomplete="off" />
-            </label>
-          </form>
+        </div>
+
+        <div class="info-panel__section">
+          <div class="section-title">Actions</div>
           <div class="info-panel__actions">
             <button type="button" class="ghost-button" data-action="toggle-favorite" disabled>Mark favorite</button>
             <button type="button" class="ghost-button" data-action="toggle-save-contact" disabled>Save contact</button>
             <button type="button" class="ghost-button" data-action="copy-contact-link" disabled>Copy wallet</button>
+            <button type="button" class="ghost-button" data-action="clear-chat" disabled>Clear chat</button>
             <button type="button" class="ghost-button" data-action="remove-contact" disabled>Remove</button>
           </div>
         </div>
@@ -297,15 +353,6 @@
           <p class="info-panel__notice">Recipient: <span data-role="payment-recipient">—</span></p>
         </div>
 
-        <div class="info-panel__section info-panel__section--placeholder">
-          <div class="section-title">Group info</div>
-          <p>Placeholder for future extensions.</p>
-        </div>
-
-        <div class="info-panel__section info-panel__section--placeholder">
-          <div class="section-title">Shared files</div>
-          <p>Coming soon.</p>
-        </div>
       </aside>
 
       <!-- Mobile Bottom Navigation -->
@@ -345,13 +392,6 @@
             </div>
           </header>
           
-          <div class="mobile-info-sheet__section">
-            <label class="mobile-info-sheet__field">
-              <span class="mobile-info-sheet__label">Local name</span>
-              <input type="text" placeholder="Add a name..." data-role="mobile-info-local-name" />
-            </label>
-          </div>
-          
           <div class="mobile-info-sheet__actions">
             <button type="button" class="mobile-info-sheet__action" data-action="mobile-toggle-favorite">
               <span class="icon icon-favorites"></span>
@@ -364,6 +404,10 @@
             <button type="button" class="mobile-info-sheet__action" data-action="mobile-copy-wallet">
               <span class="icon icon-copy"></span>
               <span>Copy wallet</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-clear-chat">
+              <span class="icon icon-clear"></span>
+              <span>Clear chat</span>
             </button>
             <button type="button" class="mobile-info-sheet__action mobile-info-sheet__action--danger" data-action="mobile-remove-contact">
               <span class="icon icon-trash"></span>
@@ -397,7 +441,7 @@
       </div>
     </div>
 
-    <div class="onboarding" data-role="onboarding" hidden>
+    <div class="onboarding" data-role="onboarding" hidden style="display: none">
       <div class="onboarding__overlay"></div>
       <div class="onboarding__dialog">
         <div class="onboarding__header">
@@ -408,7 +452,7 @@
         </div>
 
         <div class="onboarding__steps">
-          <div class="onboarding__step is-active" data-step="nickname">
+          <div class="onboarding__step" data-step="nickname">
             <h2>Choose your nickname</h2>
             <p>This name is shown to your contacts. You can change it later in settings.</p>
             <form data-role="nickname-form" class="onboarding__form">
@@ -494,6 +538,29 @@
     <script>
       window.SOLINK_API_BASE = '/api';
     </script>
-    <script type="module" src="./js/chat.js?v=20241128"></script>
+    <script type="module" src="./js/chat.js?v=20241130z5"></script>
   </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
