@@ -1,0 +1,40 @@
+<svg width="192" height="192" viewBox="0 0 192 192" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1524"/>
+      <stop offset="50%" stop-color="#1a1035"/>
+      <stop offset="100%" stop-color="#0a0a0f"/>
+    </linearGradient>
+    <radialGradient id="glow-purple" cx="0.7" cy="0.2" r="0.8">
+      <stop offset="0%" stop-color="#8752FF" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#8752FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-rose" cx="0.5" cy="0.5" r="0.7">
+      <stop offset="0%" stop-color="#FF73AF" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#FF73AF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" result="noise"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500&amp;display=swap');
+    </style>
+  </defs>
+  
+  <rect width="192" height="192" rx="38" fill="url(#bg-grad)"/>
+  <rect width="192" height="192" rx="38" fill="url(#glow-purple)" style="mix-blend-mode:screen"/>
+  <rect width="192" height="192" rx="38" fill="url(#glow-rose)" style="mix-blend-mode:screen"/>
+  <rect width="192" height="192" rx="38" filter="url(#grain)" opacity="0.25" style="mix-blend-mode:soft-light"/>
+  
+  <text 
+    x="96" 
+    y="110" 
+    text-anchor="middle" 
+    dominant-baseline="middle"
+    font-family="'Space Grotesk', sans-serif" 
+    font-weight="500" 
+    font-size="85"
+    fill="#FFFFFF">S</text>
+</svg>
+

@@ -1,7 +1,11 @@
 node_modules/
 .wrangler/
+wrangler.toml
 tmp/
+tmp-*.js
 *.log
 .DS_Store
 *.sqlite
 
+# Cursor IDE
+.cursor/

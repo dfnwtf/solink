@@ -4,7 +4,9 @@ import { checkAndIncrementRateLimit } from './utils/ratelimit';
 import { InboxDurable, INBOX_DELIVERY_TTL_MS, MAX_BATCH } from './inbox-do';
 
 const SESSION_PREFIX = 'session:';
-const SESSION_TTL_SECONDS = 15 * 60; // 15 минут
+const DEFAULT_SESSION_TTL_SECONDS = 60 * 60; // 1 hour default
+const MIN_SESSION_TTL_SECONDS = 15 * 60; // 15 minutes minimum
+const MAX_SESSION_TTL_SECONDS = 12 * 60 * 60; // 12 hours maximum
 const MAX_MESSAGE_LENGTH = 1024;
 const DEFAULT_CORS = {
   origin: '*',
@@ -236,10 +238,12 @@ async function getSessionPubkey(kvNamespace, token) {
   }
 }
 
-async function createSession(kvNamespace, pubkey) {
+async function createSession(kvNamespace, pubkey, ttlSeconds = DEFAULT_SESSION_TTL_SECONDS) {
+  // Clamp TTL to valid range
+  const clampedTtl = Math.max(MIN_SESSION_TTL_SECONDS, Math.min(MAX_SESSION_TTL_SECONDS, ttlSeconds));
   const token = generateToken(24);
   await kvNamespace.put(sessionKey(token), JSON.stringify({ pubkey }), {
-    expirationTtl: SESSION_TTL_SECONDS,
+    expirationTtl: clampedTtl,
   });
   return token;
 }
@@ -344,6 +348,12 @@ export default {
         return handleProfileByKey(request, url, env);
       case '/api/solana':
         return handleSolanaProxy(request, env);
+      case '/api/token/preview':
+        return handleTokenPreview(request, url, env);
+      case '/api/dex/preview':
+        return handleDexPairPreview(request, url, env);
+      case '/api/image-proxy':
+        return handleImageProxy(request, url, env);
       default:
         return new Response('Not Found', { status: 404 });
     }
@@ -374,7 +384,7 @@ async function handleVerifyRequest(request, env) {
     return errorResponse(env, 'Invalid JSON payload');
   }
 
-  const { pubkey, nonce, signature } = body;
+  const { pubkey, nonce, signature, sessionTtl } = body;
   if (!pubkey || !nonce || !signature) {
     return errorResponse(env, 'Missing fields');
   }
@@ -389,7 +399,12 @@ async function handleVerifyRequest(request, env) {
     return errorResponse(env, 'Invalid signature', 401);
   }
 
-  const token = await createSession(env.SOLINK_KV, pubkey);
+  // Use custom session TTL if provided, otherwise use default
+  const ttlSeconds = typeof sessionTtl === 'number' && sessionTtl > 0 
+    ? sessionTtl 
+    : DEFAULT_SESSION_TTL_SECONDS;
+  
+  const token = await createSession(env.SOLINK_KV, pubkey, ttlSeconds);
   return jsonResponse(env, {
     token,
     user: { pubkey },
@@ -412,7 +427,7 @@ async function handleSendMessage(request, env) {
     return errorResponse(env, 'Invalid JSON payload');
   }
 
-  const { to, text, timestamp, ciphertext, nonce, version } = body;
+  const { to, text, timestamp, ciphertext, nonce, version, tokenPreview } = body;
   if (!to || (!text && !ciphertext)) {
     return errorResponse(env, 'Missing fields');
   }
@@ -444,6 +459,36 @@ async function handleSendMessage(request, env) {
   const encryptionVersion =
     Number.isFinite(version) && version > 0 ? Number(version) : sanitizedCiphertext ? 1 : null;
 
+  // Sanitize token preview (limit size to prevent abuse)
+  let sanitizedTokenPreview = null;
+  if (tokenPreview && typeof tokenPreview === 'object') {
+    sanitizedTokenPreview = {
+      address: typeof tokenPreview.address === 'string' ? tokenPreview.address.slice(0, 50) : null,
+      name: typeof tokenPreview.name === 'string' ? tokenPreview.name.slice(0, 100) : null,
+      symbol: typeof tokenPreview.symbol === 'string' ? tokenPreview.symbol.slice(0, 20) : null,
+      imageUrl: typeof tokenPreview.imageUrl === 'string' ? tokenPreview.imageUrl.slice(0, 500) : null,
+      priceUsd: tokenPreview.priceUsd ?? null,
+      priceChange24h: tokenPreview.priceChange24h ?? null,
+      priceChange1h: tokenPreview.priceChange1h ?? null,
+      priceChange5m: tokenPreview.priceChange5m ?? null,
+      marketCap: tokenPreview.marketCap ?? null,
+      liquidity: tokenPreview.liquidity ?? null,
+      volume24h: tokenPreview.volume24h ?? null,
+      txns24h: tokenPreview.txns24h ?? null,
+      buys24h: tokenPreview.buys24h ?? null,
+      sells24h: tokenPreview.sells24h ?? null,
+      dexId: typeof tokenPreview.dexId === 'string' ? tokenPreview.dexId.slice(0, 50) : null,
+      pairAddress: typeof tokenPreview.pairAddress === 'string' ? tokenPreview.pairAddress.slice(0, 50) : null,
+      createdAt: tokenPreview.createdAt ?? null,
+      bondingProgress: tokenPreview.bondingProgress ?? null,
+      isComplete: Boolean(tokenPreview.isComplete),
+      socials: Array.isArray(tokenPreview.socials) ? tokenPreview.socials.slice(0, 5).map(s => ({
+        type: typeof s.type === 'string' ? s.type.slice(0, 20) : '',
+        url: typeof s.url === 'string' ? s.url.slice(0, 200) : '',
+      })).filter(s => s.type && s.url) : null,
+    };
+  }
+
   const message = {
     id: crypto.randomUUID(),
     from: senderPubkey,
@@ -455,6 +500,8 @@ async function handleSendMessage(request, env) {
     timestamp: Number.isFinite(timestamp) ? Number(timestamp) : Date.now(),
     senderNickname,
     senderDisplayName,
+    senderEncryptionKey: senderProfile?.encryptionPublicKey || null,
+    tokenPreview: sanitizedTokenPreview,
     expiresAt: Date.now() + INBOX_DELIVERY_TTL_MS,
   };
 
@@ -723,6 +770,399 @@ function sanitizeProfile(profile) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Token preview for pump.fun links
+const PUMP_FUN_API = 'https://frontend-api.pump.fun'; // v2 API (no auth needed)
+const DEXSCREENER_API = 'https://api.dexscreener.com/tokens/v1/solana';
+const HELIUS_METADATA_API = 'https://api.helius.xyz/v0/token-metadata';
+
+async function handleTokenPreview(request, url, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const tokenAddress = url.searchParams.get('address');
+  if (!tokenAddress || !BASE58_REGEX.test(tokenAddress)) {
+    return errorResponse(env, 'Invalid token address');
+  }
+
+  try {
+    // Extract Helius API key from RPC URL
+    const heliusApiKey = env.SOLANA_RPC_URL?.match(/api-key=([^&]+)/)?.[1] || null;
+
+    // Fetch from all APIs in parallel
+    const [pumpResponse, dexResponse, heliusResponse] = await Promise.allSettled([
+      fetch(`${PUMP_FUN_API}/coins/${tokenAddress}`, {
+        headers: { 
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Origin': 'https://pump.fun',
+          'Referer': 'https://pump.fun/'
+        }
+      }),
+      fetch(`${DEXSCREENER_API}/${tokenAddress}`, {
+        headers: { 'Accept': 'application/json' }
+      }),
+      // Helius token metadata API
+      heliusApiKey ? fetch(`${HELIUS_METADATA_API}?api-key=${heliusApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mintAccounts: [tokenAddress],
+          includeOffChain: true,
+          disableCache: false
+        })
+      }) : Promise.resolve(null)
+    ]);
+
+    let pumpData = null;
+    let dexData = null;
+    let heliusData = null;
+    
+    // Debug info
+    const debugInfo = {
+      pumpStatus: pumpResponse.status,
+      pumpOk: pumpResponse.status === 'fulfilled' ? pumpResponse.value?.ok : false,
+      dexStatus: dexResponse.status,
+      dexOk: dexResponse.status === 'fulfilled' ? dexResponse.value?.ok : false,
+      heliusStatus: heliusResponse.status,
+      heliusOk: heliusResponse.status === 'fulfilled' ? heliusResponse.value?.ok : false,
+    };
+
+    // Parse pump.fun response
+    if (pumpResponse.status === 'fulfilled' && pumpResponse.value.ok) {
+      try {
+        pumpData = await pumpResponse.value.json();
+        debugInfo.pumpHasImage = !!pumpData?.image_uri;
+      } catch (e) {
+        debugInfo.pumpError = e.message;
+      }
+    }
+
+    // Parse DexScreener response (new v1 API returns array directly)
+    if (dexResponse.status === 'fulfilled' && dexResponse.value.ok) {
+      try {
+        const dexJson = await dexResponse.value.json();
+        // DexScreener v1 API returns array of pairs directly
+        const pairs = Array.isArray(dexJson) ? dexJson : (dexJson.pairs || []);
+        if (pairs.length > 0) {
+          // Sort by liquidity and take the best pair
+          dexData = pairs.sort((a, b) => 
+            (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
+          )[0];
+          debugInfo.dexHasImage = !!dexData?.info?.imageUrl;
+        }
+      } catch (e) {
+        debugInfo.dexError = e.message;
+      }
+    }
+
+    // Parse Helius response
+    if (heliusResponse.status === 'fulfilled' && heliusResponse.value?.ok) {
+      try {
+        const heliusJson = await heliusResponse.value.json();
+        if (Array.isArray(heliusJson) && heliusJson.length > 0) {
+          heliusData = heliusJson[0];
+          debugInfo.heliusHasOffChainImage = !!heliusData?.offChainMetadata?.metadata?.image;
+          debugInfo.heliusHasOnChainImage = !!heliusData?.onChainMetadata?.metadata?.image;
+        }
+      } catch (e) {
+        debugInfo.heliusError = e.message;
+      }
+    }
+    
+    console.log('Token preview debug:', tokenAddress, JSON.stringify(debugInfo));
+
+    // If we have no data at all, return error
+    if (!pumpData && !dexData && !heliusData) {
+      return errorResponse(env, 'Token not found', 404);
+    }
+
+    // Build unified preview object
+    // Try multiple image sources with logging
+    const imageSources = {
+      heliusOffChain: heliusData?.offChainMetadata?.metadata?.image,
+      heliusOnChain: heliusData?.onChainMetadata?.metadata?.image,
+      heliusLegacyUri: heliusData?.legacyMetadata?.logoURI,
+      dexScreener: dexData?.info?.imageUrl,
+      pumpFun: pumpData?.image_uri,
+    };
+    
+    console.log('Image sources for token:', tokenAddress, JSON.stringify(imageSources));
+    
+    const imageUrl = 
+      imageSources.heliusOffChain ||
+      imageSources.heliusOnChain ||
+      imageSources.heliusLegacyUri ||
+      imageSources.dexScreener || 
+      imageSources.pumpFun || 
+      null;
+
+    // Calculate transactions
+    const txns24h = dexData?.txns?.h24 
+      ? (dexData.txns.h24.buys || 0) + (dexData.txns.h24.sells || 0) 
+      : null;
+    const buys24h = dexData?.txns?.h24?.buys || null;
+    const sells24h = dexData?.txns?.h24?.sells || null;
+
+    // Get socials/links
+    const socials = [];
+    
+    // DexScreener socials - has url and type fields
+    if (dexData?.info?.socials && Array.isArray(dexData.info.socials)) {
+      for (const s of dexData.info.socials) {
+        if (s.url && s.type) {
+          // DexScreener returns full URLs
+          let url = s.url;
+          let type = s.type.toLowerCase();
+          // Normalize twitter to x
+          if (type === 'twitter' && url.includes('twitter.com')) {
+            url = url.replace('twitter.com', 'x.com');
+          }
+          socials.push({ type, url });
+        }
+      }
+    }
+    
+    // DexScreener websites
+    if (dexData?.info?.websites && Array.isArray(dexData.info.websites)) {
+      for (const w of dexData.info.websites) {
+        if (w.url) socials.push({ type: 'website', url: w.url });
+      }
+    }
+    
+    console.log('DexScreener socials raw:', JSON.stringify(dexData?.info?.socials));
+    console.log('DexScreener websites raw:', JSON.stringify(dexData?.info?.websites));
+    console.log('Parsed socials:', JSON.stringify(socials));
+    
+    // Pump.fun socials (fallback)
+    if (pumpData?.twitter) {
+      const tw = pumpData.twitter;
+      const twUrl = tw.startsWith('http') ? tw.replace('twitter.com', 'x.com') : `https://x.com/${tw.replace('@', '')}`;
+      socials.push({ type: 'twitter', url: twUrl });
+    }
+    if (pumpData?.telegram) {
+      const tg = pumpData.telegram;
+      const tgUrl = tg.startsWith('http') ? tg : `https://t.me/${tg.replace('@', '')}`;
+      socials.push({ type: 'telegram', url: tgUrl });
+    }
+    if (pumpData?.website) socials.push({ type: 'website', url: pumpData.website });
+    
+    // Try Helius metadata for socials
+    const heliusMeta = heliusData?.offChainMetadata?.metadata;
+    if (heliusMeta?.external_url && !socials.some(s => s.type === 'website')) {
+      socials.push({ type: 'website', url: heliusMeta.external_url });
+    }
+    // Check properties for socials
+    const props = heliusMeta?.properties;
+    if (props) {
+      if (props.twitter && !socials.some(s => s.type === 'twitter')) {
+        const tw = props.twitter;
+        socials.push({ type: 'twitter', url: tw.startsWith('http') ? tw : `https://x.com/${tw.replace('@', '')}` });
+      }
+      if (props.telegram && !socials.some(s => s.type === 'telegram')) {
+        const tg = props.telegram;
+        socials.push({ type: 'telegram', url: tg.startsWith('http') ? tg : `https://t.me/${tg.replace('@', '')}` });
+      }
+      if (props.discord && !socials.some(s => s.type === 'discord')) {
+        socials.push({ type: 'discord', url: props.discord });
+      }
+    }
+
+    const preview = {
+      address: tokenAddress,
+      name: pumpData?.name || heliusData?.offChainMetadata?.metadata?.name || dexData?.baseToken?.name || 'Unknown',
+      symbol: pumpData?.symbol || heliusData?.offChainMetadata?.metadata?.symbol || dexData?.baseToken?.symbol || '???',
+      imageUrl,
+      description: pumpData?.description ? pumpData.description.slice(0, 200) : (heliusData?.offChainMetadata?.metadata?.description?.slice(0, 200) || null),
+      
+      // Price data (prefer DexScreener for accuracy)
+      priceUsd: dexData?.priceUsd || null,
+      priceChange24h: dexData?.priceChange?.h24 || null,
+      priceChange1h: dexData?.priceChange?.h1 || null,
+      priceChange5m: dexData?.priceChange?.m5 || null,
+      
+      // Market data
+      marketCap: dexData?.marketCap || dexData?.fdv || pumpData?.market_cap || null,
+      liquidity: dexData?.liquidity?.usd || null,
+      volume24h: dexData?.volume?.h24 || null,
+      volume1h: dexData?.volume?.h1 || null,
+      
+      // Transactions
+      txns24h,
+      buys24h,
+      sells24h,
+      
+      // DEX info
+      dexId: dexData?.dexId || (pumpData ? 'pumpfun' : null),
+      pairAddress: dexData?.pairAddress || null,
+      
+      // Pump.fun specific
+      bondingProgress: pumpData?.bonding_curve_progress || null,
+      isComplete: pumpData?.complete || false,
+      
+      // Social links
+      socials: socials.length > 0 ? socials : null,
+      
+      // Metadata
+      createdAt: dexData?.pairCreatedAt || pumpData?.created_timestamp || null,
+      fetchedAt: Date.now(),
+    };
+
+    return jsonResponse(env, { preview });
+  } catch (error) {
+    console.error('Token preview error:', error);
+    return errorResponse(env, 'Failed to fetch token data', 500);
+  }
+}
+
+// DexScreener pair preview (by pair address)
+const DEXSCREENER_PAIRS_API = 'https://api.dexscreener.com/latest/dex/pairs/solana';
+
+async function handleDexPairPreview(request, url, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const pairAddress = url.searchParams.get('pair');
+  if (!pairAddress || pairAddress.length < 30 || pairAddress.length > 50) {
+    return errorResponse(env, 'Invalid pair address');
+  }
+
+  try {
+    // Fetch from DexScreener pairs API
+    const dexResponse = await fetch(`${DEXSCREENER_PAIRS_API}/${pairAddress}`, {
+      headers: { 'User-Agent': 'SOLink/1.0' },
+    });
+
+    if (!dexResponse.ok) {
+      return errorResponse(env, 'Pair not found', 404);
+    }
+
+    const dexData = await dexResponse.json();
+    const pair = dexData.pair || dexData.pairs?.[0];
+    
+    if (!pair) {
+      return errorResponse(env, 'Pair not found', 404);
+    }
+
+    // Extract token info from pair
+    const baseToken = pair.baseToken || {};
+    const quoteToken = pair.quoteToken || {};
+    
+    // Get social links
+    const socials = [];
+    if (pair.info?.socials) {
+      pair.info.socials.forEach(s => {
+        if (s.url && s.type) {
+          let socialType = s.type.toLowerCase();
+          let socialUrl = s.url;
+          // Convert twitter to x.com
+          if (socialType === 'twitter') {
+            socialType = 'x';
+            if (!socialUrl.includes('x.com')) {
+              socialUrl = socialUrl.replace('twitter.com', 'x.com');
+            }
+          }
+          socials.push({ type: socialType, url: socialUrl });
+        }
+      });
+    }
+    if (pair.info?.websites?.length) {
+      pair.info.websites.forEach(w => {
+        if (w.url) {
+          socials.push({ type: 'website', url: w.url });
+        }
+      });
+    }
+
+    // Build preview response
+    const preview = {
+      address: baseToken.address || pairAddress,
+      name: baseToken.name || 'Unknown',
+      symbol: baseToken.symbol || '???',
+      imageUrl: pair.info?.imageUrl || null,
+      priceUsd: pair.priceUsd ? parseFloat(pair.priceUsd) : null,
+      priceChange24h: pair.priceChange?.h24 ?? null,
+      priceChange1h: pair.priceChange?.h1 ?? null,
+      priceChange5m: pair.priceChange?.m5 ?? null,
+      marketCap: pair.marketCap || pair.fdv || null,
+      liquidity: pair.liquidity?.usd || null,
+      volume24h: pair.volume?.h24 || null,
+      txns24h: pair.txns?.h24 ? (pair.txns.h24.buys || 0) + (pair.txns.h24.sells || 0) : null,
+      buys24h: pair.txns?.h24?.buys || null,
+      sells24h: pair.txns?.h24?.sells || null,
+      dexId: pair.dexId || null,
+      pairAddress: pair.pairAddress || pairAddress,
+      createdAt: pair.pairCreatedAt || null,
+      bondingProgress: null, // Not applicable for DEX pairs
+      isComplete: true, // DEX pairs are already graduated
+      socials: socials.length > 0 ? socials : null,
+    };
+
+    return jsonResponse(env, preview);
+  } catch (error) {
+    console.error('DexScreener pair preview error:', error);
+    return errorResponse(env, 'Failed to fetch pair data', 500);
+  }
+}
+
+// Image proxy to bypass CORS restrictions
+async function handleImageProxy(request, url, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const imageUrl = url.searchParams.get('url');
+  if (!imageUrl) {
+    return errorResponse(env, 'Missing url parameter');
+  }
+
+  // Only allow certain domains for security
+  const allowedDomains = [
+    'cdn.dexscreener.com',
+    'pump.mypinata.cloud',
+    'ipfs.io',
+    'arweave.net',
+    'cf-ipfs.com',
+    'nftstorage.link',
+    'gateway.pinata.cloud',
+  ];
+
+  try {
+    const parsedUrl = new URL(imageUrl);
+    const isAllowed = allowedDomains.some(domain => parsedUrl.hostname.endsWith(domain));
+    
+    if (!isAllowed) {
+      return errorResponse(env, 'Domain not allowed', 403);
+    }
+
+    const response = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'SOLink/1.0',
+        'Accept': 'image/*',
+      },
+    });
+
+    if (!response.ok) {
+      return new Response('Image not found', { status: 404 });
+    }
+
+    const contentType = response.headers.get('Content-Type') || 'image/png';
+    const imageData = await response.arrayBuffer();
+
+    return new Response(imageData, {
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=86400', // Cache for 24 hours
+        ...buildCorsHeaders(env),
+      },
+    });
+  } catch (error) {
+    console.error('Image proxy error:', error);
+    return errorResponse(env, 'Failed to fetch image', 500);
+  }
 }
 
 export { InboxDurable };

@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    
+    <!-- Primary Meta Tags -->
+    <title>SOLink — Web3 Messenger</title>
+    <meta name="title" content="SOLink — Web3 Messenger" />
+    <meta name="description" content="Secure, decentralized messaging on Solana. Connect your Phantom wallet to start chatting." />
+    <meta name="robots" content="noindex, nofollow" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#0a090e" />
+    <meta name="msapplication-TileColor" content="#0a090e" />
+    
+    <!-- PWA / Mobile App -->
+    <meta name="application-name" content="SOLink" />
+    <meta name="apple-mobile-web-app-title" content="SOLink" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
+    
+    <!-- Critical CSS to prevent flash of onboarding modal -->
+    <style>
+      .onboarding[hidden], .connect-overlay[hidden] { display: none !important; }
+      .onboarding { display: none; }
+    </style>
+    
+    <link rel="stylesheet" href="/css/style.css?v=20241130z" />
+    <script type="importmap">
+      {
+        "imports": {
+          "buffer": "https://cdn.jsdelivr.net/npm/buffer@6.0.3/+esm",
+          "@noble/curves/ed25519": "https://cdn.jsdelivr.net/npm/@noble/curves@1.3.0/esm/ed25519.js",
+          "bn.js": "https://cdn.jsdelivr.net/npm/bn.js@5.2.1/+esm",
+          "bs58": "https://cdn.jsdelivr.net/npm/bs58@6.0.0/+esm",
+          "@noble/hashes/sha256": "https://cdn.jsdelivr.net/npm/@noble/hashes@1.3.2/sha256.js/+esm",
+          "@noble/hashes/sha3": "https://cdn.jsdelivr.net/npm/@noble/hashes@1.3.2/sha3.js/+esm",
+          "@noble/hashes/sha512": "https://cdn.jsdelivr.net/npm/@noble/hashes@1.3.2/sha512.js/+esm",
+          "@noble/hashes/utils": "https://cdn.jsdelivr.net/npm/@noble/hashes@1.3.2/utils.js/+esm",
+          "@noble/hashes/hmac": "https://cdn.jsdelivr.net/npm/@noble/hashes@1.3.2/hmac.js/+esm",
+          "@noble/hashes/blake2s": "https://cdn.jsdelivr.net/npm/@noble/hashes@1.3.2/blake2s.js/+esm",
+          "@noble/curves/secp256k1": "https://cdn.jsdelivr.net/npm/@noble/curves@1.3.0/esm/secp256k1.js",
+          "borsh": "https://cdn.jsdelivr.net/npm/borsh@0.7.0/+esm",
+          "@solana/buffer-layout": "https://cdn.jsdelivr.net/npm/@solana/buffer-layout@4.0.1/+esm",
+          "bigint-buffer": "https://cdn.jsdelivr.net/npm/bigint-buffer@1.1.5/+esm",
+          "superstruct": "https://cdn.jsdelivr.net/npm/superstruct@1.0.3/+esm",
+          "jayson/lib/client/browser": "/js/vendor/jayson-browser.js",
+          "eventemitter3": "/js/vendor/eventemitter3-wrapper.js",
+          "/npm/eventemitter3@4.0.7/+esm": "/js/vendor/eventemitter3-wrapper.js",
+          "https://cdn.jsdelivr.net/npm/eventemitter3@4.0.7/+esm": "/js/vendor/eventemitter3-wrapper.js",
+          "rpc-websockets/dist/lib/client": "/js/vendor/rpc-websocket-client.js",
+          "rpc-websockets/dist/lib/client/websocket.browser": "/js/vendor/rpc-websocket-factory.js"
+        }
+      }
+    </script>
+  </head>
+  <body class="app-shell" data-theme="dark">
+    <div class="app-layout">
+      <aside class="nav-rail">
+        <a href="/" class="nav-rail__logo">SOLink</a>
+        <nav class="nav-rail__list">
+          <button type="button" class="nav-rail__item is-active" data-nav="all">
+            <span class="nav-rail__icon icon-chats"></span>
+            <span class="nav-rail__label">All chats</span>
+          </button>
+          <button type="button" class="nav-rail__item" data-nav="contacts">
+            <span class="nav-rail__icon icon-contacts"></span>
+            <span class="nav-rail__label">Contacts</span>
+          </button>
+          <button type="button" class="nav-rail__item" data-nav="favorites">
+            <span class="nav-rail__icon icon-favorites"></span>
+            <span class="nav-rail__label">Favorite</span>
+          </button>
+          <button type="button" class="nav-rail__item" data-nav="profile">
+            <span class="nav-rail__icon icon-profile"></span>
+            <span class="nav-rail__label">Profile</span>
+          </button>
+          <button type="button" class="nav-rail__item" data-nav="settings">
+            <span class="nav-rail__icon icon-settings"></span>
+            <span class="nav-rail__label">Settings</span>
+          </button>
+        </nav>
+        <div class="nav-rail__footer">
+          <button
+            type="button"
+            class="nav-rail__install"
+            data-action="install-app"
+            aria-label="Install app"
+            title="Install SOLink as app"
+            hidden
+          >
+            <span class="icon icon-download"></span>
+          </button>
+          <button
+            type="button"
+            class="nav-rail__connect"
+            data-action="reconnect-wallet"
+            aria-label="Reconnect wallet"
+            title="Reconnect wallet"
+          >
+            <span class="icon icon-reload"></span>
+          </button>
+        </div>
+      </aside>
+
+      <section class="list-column" data-role="sidebar">
+        <header class="profile-card">
+          <button
+            type="button"
+            class="avatar-button profile-card__avatar"
+            data-role="profile-avatar"
+            aria-label="Open profile"
+          ></button>
+          <div class="profile-card__meta">
+            <div class="profile-card__name" data-role="profile-nickname">Anonymous</div>
+            <div class="profile-card__wallet">
+              <span class="profile-card__wallet-label">Wallet</span>
+              <span class="profile-card__wallet-value" data-role="profile-wallet">—</span>
+            </div>
+          </div>
+          <div class="profile-card__status">
+            <span class="status-dot" data-role="connection-indicator"></span>
+            <span class="profile-card__status-text" data-role="status">Connecting...</span>
+          </div>
+        </header>
+
+        <div class="sidebar-default" data-role="sidebar-default">
+          <form class="search-field search-field--accent" data-role="search-form">
+            <span class="icon icon-search"></span>
+            <input type="search" placeholder="Search chats or contacts" data-role="search-input" autocomplete="off" />
+          </form>
+
+          <div class="sidebar__controls">
+            <button type="button" class="primary-button primary-button--block" data-action="new-chat">New chat</button>
+          </div>
+
+          <div class="sidebar__section">
+            <div class="sidebar__section-title">Chats</div>
+            <div class="chat-list" data-role="chat-list"></div>
+            <p class="sidebar__security-note">
+              Messages stay private thanks to X25519 + XSalsa20-Poly1305 encryption.
+            </p>
+          </div>
+        </div>
+
+        <section class="profile-panel sidebar__section" data-role="profile-panel" hidden>
+          <div class="sidebar__section-title">Profile</div>
+          <div class="profile-panel__card">
+            <div class="profile-panel__identity">
+              <div class="contact-avatar contact-avatar--lg" data-role="profile-panel-avatar"></div>
+              <div>
+                <div class="profile-panel__name" data-role="profile-panel-name">Set nickname</div>
+                <div class="profile-panel__wallet" data-role="profile-panel-wallet">Wallet not connected</div>
+              </div>
+            </div>
+
+            <form class="profile-panel__form" data-role="profile-form">
+              <label>
+                Nickname
+                <div class="profile-panel__input">
+                  <span class="profile-panel__prefix">@</span>
+                  <input
+                    type="text"
+                    placeholder="yourname"
+                    minlength="3"
+                    maxlength="24"
+                    autocomplete="off"
+                    data-role="profile-nickname-input"
+                    required
+                  />
+                </div>
+              </label>
+              <p class="hint" data-role="profile-nickname-hint"></p>
+              <button type="submit" class="primary-button primary-button--block">Save nickname</button>
+            </form>
+
+            <p class="profile-panel__notice">
+              Usernames are unique across SOLink and are linked to your connected wallet.
+            </p>
+          </div>
+        </section>
+
+        <section class="settings-panel sidebar__section" data-role="settings-panel" hidden>
+          <div class="sidebar__section-title">Settings</div>
+          <div class="settings-card">
+            <div class="settings-option">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Sound notifications</div>
+                <p class="settings-option__description">Play a sound for new incoming messages.</p>
+              </div>
+              <label class="settings-toggle" aria-label="Toggle sound notifications">
+                <input type="checkbox" data-role="settings-sound-toggle" checked />
+                <span class="settings-toggle__track"></span>
+              </label>
+            </div>
+            <div class="settings-option">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">
+                  Session duration
+                  <span class="settings-tooltip" data-tooltip="How long the messenger stays connected without requiring wallet re-authentication. Longer sessions are more convenient, shorter are more secure.">?</span>
+                </div>
+                <p class="settings-option__description">Auto-disconnect after this time.</p>
+              </div>
+              <select class="settings-select" data-role="settings-session-duration">
+                <option value="900000">15 min</option>
+                <option value="1800000">30 min</option>
+                <option value="3600000" selected>1 hour</option>
+                <option value="7200000">2 hours</option>
+                <option value="14400000">4 hours</option>
+                <option value="28800000">8 hours</option>
+                <option value="43200000">12 hours</option>
+              </select>
+            </div>
+            <div class="settings-option">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Backup &amp; restore</div>
+                <p class="settings-option__description">Export or import your contacts and chats locally.</p>
+              </div>
+              <div class="settings-option__actions">
+                <button type="button" class="ghost-button" data-action="export-data">Export</button>
+                <button type="button" class="ghost-button" data-action="import-data">Import</button>
+              </div>
+            </div>
+            <div class="settings-option settings-option--logout">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Log out</div>
+                <p class="settings-option__description">Disconnect wallet and return to the start screen.</p>
+              </div>
+              <button type="button" class="ghost-button ghost-button--danger" data-action="logout">Log out</button>
+            </div>
+          </div>
+          <input type="file" data-role="import-file" accept="application/json" hidden />
+        </section>
+      </section>
+
+      <section class="chat-column" data-role="chat-view">
+        <header class="chat-column__header">
+          <button type="button" class="mobile-back-btn" data-action="mobile-back" aria-label="Back to chats">
+            <span class="icon icon-arrow-left"></span>
+          </button>
+          <div class="chat-column__contact">
+            <div class="contact-avatar" data-role="chat-avatar"></div>
+            <div>
+              <div class="contact-name" data-role="chat-name">Select chat</div>
+              <div class="contact-status" data-role="chat-status">No conversation yet</div>
+            </div>
+          </div>
+          <form class="search-field search-field--compact" data-role="message-search-form">
+            <span class="icon icon-search"></span>
+            <input type="search" placeholder="Search messages" data-role="message-search-input" autocomplete="off" />
+          </form>
+          <div class="chat-column__actions">
+            <button type="button" class="ghost-icon-button mobile-info-btn" data-action="open-mobile-info" aria-label="Contact info">
+              <span class="icon icon-more"></span>
+            </button>
+            <button type="button" class="ghost-icon-button" data-action="close-chat" aria-label="Close chat">
+              <span class="icon icon-close"></span>
+            </button>
+          </div>
+        </header>
+
+        <div class="chat-column__body">
+          <div class="timeline" data-role="message-list"></div>
+          <div class="timeline-empty" data-role="empty-state">
+            Select a chat to start messaging.
+          </div>
+        </div>
+
+        <footer class="composer" data-role="composer">
+          <div class="composer__reply" data-role="reply-preview" hidden>
+            <div class="composer__reply-bar"></div>
+            <div class="composer__reply-body">
+              <div class="composer__reply-author" data-role="reply-author">Reply</div>
+              <div class="composer__reply-text" data-role="reply-text"></div>
+            </div>
+            <button
+              type="button"
+              class="composer__reply-close"
+              data-action="cancel-reply"
+              aria-label="Cancel reply"
+            >
+              <span class="icon icon-close"></span>
+            </button>
+          </div>
+          <textarea
+            class="composer__input"
+            rows="1"
+            placeholder="Write a message..."
+            autocomplete="off"
+            data-role="message-input"
+            maxlength="2000"
+          ></textarea>
+          <div class="composer__toolbar">
+            <span class="composer__counter" data-role="char-counter">0 / 2000</span>
+            <div class="composer__actions">
+              <button type="button" class="ghost-icon-button" data-action="toggle-emoji" aria-label="Emoji picker">
+                <span class="icon icon-emoji"></span>
+              </button>
+              <button type="button" class="primary-button" data-action="send-message" disabled>Send</button>
+            </div>
+          </div>
+        </footer>
+      </section>
+
+      <aside class="info-panel" data-role="info-panel">
+        <div class="info-panel__section">
+          <div class="info-panel__header">
+            <div class="contact-avatar contact-avatar--lg" data-role="info-avatar"></div>
+            <div>
+              <div class="contact-name" data-role="info-name">No chat selected</div>
+              <div class="contact-status" data-role="info-pubkey"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-panel__section">
+          <div class="section-title">Actions</div>
+          <div class="info-panel__actions">
+            <button type="button" class="ghost-button" data-action="toggle-favorite" disabled>Mark favorite</button>
+            <button type="button" class="ghost-button" data-action="toggle-save-contact" disabled>Save contact</button>
+            <button type="button" class="ghost-button" data-action="copy-contact-link" disabled>Copy wallet</button>
+            <button type="button" class="ghost-button" data-action="clear-chat" disabled>Clear chat</button>
+            <button type="button" class="ghost-button" data-action="remove-contact" disabled>Remove</button>
+          </div>
+        </div>
+
+        <div class="info-panel__section info-panel__section--payment">
+          <div>
+            <div class="section-title">Send SOL</div>
+            <p class="info-panel__subtitle">Transfer directly from your wallet.</p>
+          </div>
+          <label class="payment-field">
+            Amount
+            <div class="payment-field__control">
+              <input type="number" min="0" step="0.01" placeholder="0.00" data-role="payment-amount" />
+              <select data-role="payment-token">
+                <option value="SOL">SOL</option>
+              </select>
+            </div>
+          </label>
+          <button type="button" class="primary-button" data-action="send-payment" disabled>Send</button>
+          <p class="info-panel__notice">Recipient: <span data-role="payment-recipient">—</span></p>
+        </div>
+
+      </aside>
+
+      <!-- Mobile Bottom Navigation -->
+      <nav class="mobile-nav" data-role="mobile-nav">
+        <button type="button" class="mobile-nav__item is-active" data-nav="all">
+          <span class="icon icon-chats"></span>
+          <span class="mobile-nav__label">Chats</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="contacts">
+          <span class="icon icon-contacts"></span>
+          <span class="mobile-nav__label">Contacts</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="favorites">
+          <span class="icon icon-favorites"></span>
+          <span class="mobile-nav__label">Favorites</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="profile">
+          <span class="icon icon-profile"></span>
+          <span class="mobile-nav__label">Profile</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="settings">
+          <span class="icon icon-settings"></span>
+          <span class="mobile-nav__label">Settings</span>
+        </button>
+      </nav>
+
+      <!-- Mobile Contact Info Sheet -->
+      <div class="mobile-info-sheet" data-role="mobile-info-sheet" hidden>
+        <div class="mobile-info-sheet__backdrop" data-action="close-mobile-info"></div>
+        <div class="mobile-info-sheet__panel">
+          <div class="mobile-info-sheet__handle"></div>
+          <header class="mobile-info-sheet__header">
+            <div class="contact-avatar mobile-info-sheet__avatar" data-role="mobile-info-avatar"></div>
+            <div class="mobile-info-sheet__meta">
+              <div class="mobile-info-sheet__name" data-role="mobile-info-name">Contact</div>
+              <div class="mobile-info-sheet__pubkey" data-role="mobile-info-pubkey">—</div>
+            </div>
+          </header>
+          
+          <div class="mobile-info-sheet__actions">
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-toggle-favorite">
+              <span class="icon icon-favorites"></span>
+              <span data-role="mobile-favorite-label">Mark favorite</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-toggle-save">
+              <span class="icon icon-contacts"></span>
+              <span data-role="mobile-save-label">Save contact</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-copy-wallet">
+              <span class="icon icon-copy"></span>
+              <span>Copy wallet</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action" data-action="mobile-clear-chat">
+              <span class="icon icon-clear"></span>
+              <span>Clear chat</span>
+            </button>
+            <button type="button" class="mobile-info-sheet__action mobile-info-sheet__action--danger" data-action="mobile-remove-contact">
+              <span class="icon icon-trash"></span>
+              <span>Remove</span>
+            </button>
+          </div>
+          
+          <div class="mobile-info-sheet__section mobile-info-sheet__section--payment">
+            <div class="mobile-info-sheet__section-title">Send SOL</div>
+            <p class="mobile-info-sheet__hint">Transfer directly from your wallet.</p>
+            <div class="mobile-info-sheet__payment">
+              <input type="number" min="0" step="0.01" placeholder="0.00" data-role="mobile-payment-amount" />
+              <select data-role="mobile-payment-token">
+                <option value="SOL">SOL</option>
+              </select>
+            </div>
+            <button type="button" class="primary-button" data-action="mobile-send-payment" disabled>Send</button>
+            <p class="mobile-info-sheet__recipient">Recipient: <span data-role="mobile-payment-recipient">—</span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="connect-overlay" data-role="connect-overlay" hidden>
+      <div class="connect-overlay__panel">
+        <h1>Ready to chat securely</h1>
+        <p>Connect your Solana wallet to unlock encrypted conversations.</p>
+        <button type="button" class="primary-button connect-overlay__button" data-action="connect-wallet">
+          Connect wallet
+        </button>
+      </div>
+    </div>
+
+    <div class="onboarding" data-role="onboarding" hidden style="display: none">
+      <div class="onboarding__overlay"></div>
+      <div class="onboarding__dialog">
+        <div class="onboarding__header">
+          <h1>SOLink setup</h1>
+          <button type="button" class="ghost-icon-button" data-action="close-onboarding" aria-label="Close">
+            <span class="icon icon-close"></span>
+          </button>
+        </div>
+
+        <div class="onboarding__steps">
+          <div class="onboarding__step" data-step="nickname">
+            <h2>Choose your nickname</h2>
+            <p>This name is shown to your contacts. You can change it later in settings.</p>
+            <form data-role="nickname-form" class="onboarding__form">
+              <label>
+                Nickname
+                <input
+                  type="text"
+                  data-role="nickname-input"
+                  placeholder="e.g. neonwave"
+                  minlength="3"
+                  maxlength="24"
+                  autocomplete="off"
+                  required
+                />
+              </label>
+              <div class="hint" data-role="nickname-hint"></div>
+              <button type="submit" class="primary-button primary-button--full">Continue</button>
+            </form>
+          </div>
+
+          <div class="onboarding__step" data-step="share">
+            <h2>Share your link</h2>
+            <p>Invite friends to chat anonymously via wallet-to-wallet messaging.</p>
+            <div class="share-card share-card--onboarding">
+              <input type="text" readonly data-role="onboarding-share-link" />
+              <div class="share-card__actions">
+                <button type="button" class="primary-button" data-action="copy-onboarding-link">Copy link</button>
+                <button type="button" class="ghost-button" data-action="finish-onboarding">Open messenger</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="forward-modal" data-role="forward-modal" hidden>
+      <div class="forward-modal__panel">
+        <header class="forward-modal__header">
+          <div>
+            <div class="forward-modal__title">Forward message</div>
+            <div class="forward-modal__subtitle" data-role="forward-subtitle">Select a chat</div>
+          </div>
+          <button type="button" class="forward-close-button" data-action="close-forward" aria-label="Close">
+            <span class="icon icon-close"></span>
+          </button>
+        </header>
+        <div class="forward-modal__search">
+          <span class="icon icon-search"></span>
+          <input type="text" placeholder="Search chats" data-role="forward-search" autocomplete="off" />
+        </div>
+        <div class="forward-modal__list" data-role="forward-list"></div>
+        <footer class="forward-modal__footer">
+          <div class="forward-modal__selection" data-role="forward-selection" hidden>
+            <div class="forward-modal__selection-label">Forward to</div>
+            <div class="forward-modal__selection-name" data-role="forward-selection-name">—</div>
+          </div>
+          <div class="forward-modal__actions">
+            <button
+              type="button"
+              class="forward-close-button forward-close-button--text"
+              data-action="close-forward"
+            >
+              Cancel
+            </button>
+            <button type="button" class="primary-button forward-send" data-action="confirm-forward" disabled>
+              Send
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
+
+    <div class="toast" data-role="toast" hidden></div>
+
+    <div class="context-menu" data-role="message-menu" hidden>
+      <button type="button" data-action="message-reply">Reply</button>
+      <button type="button" data-action="message-forward">Forward</button>
+      <button type="button" data-action="message-delete" class="is-danger">Delete</button>
+    </div>
+
+    <audio data-role="notification-sound" preload="auto" src="/media/inbox.mp3" type="audio/mpeg"></audio>
+
+    <script>
+      window.SOLINK_API_BASE = '/api';
+    </script>
+    <script type="module" src="/js/chat.js?v=20241130z5"></script>
+  </body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

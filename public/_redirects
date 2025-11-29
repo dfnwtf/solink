@@ -1,0 +1,4 @@
+# Redirect .html extensions to clean URLs
+/app.html  /app  301
+/index.html  /  301
+
