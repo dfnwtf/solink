@@ -23,7 +23,39 @@ const ALLOWED_ORIGINS = [
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const PROFILE_PREFIX = 'profile:';
 const NICKNAME_PREFIX = 'nickname:';
-const NICKNAME_REGEX = /^[a-z0-9_.-]{3,24}$/;
+const NICKNAME_REGEX = /^[a-z][a-z0-9_]{2,15}$/;
+const NICKNAME_BLOCKLIST = new Set([
+  // Administrative
+  "admin", "administrator", "mod", "moderator", "support", "help", "official",
+  "staff", "team", "owner", "founder", "ceo", "cto", "dev", "developer",
+  // Brand - SOLink
+  "solink", "so_link", "solink_official", "solink_support", "solink_team",
+  "solink_admin", "solinkapp", "solinkchat",
+  // Brand - Solana ecosystem
+  "solana", "phantom", "jupiter", "raydium", "orca", "marinade", "magic_eden",
+  "magiceden", "tensor", "jito", "pyth", "serum", "mango", "drift", "kamino",
+  "helium", "render", "bonk", "wif", "popcat", "samo",
+  // Crypto exchanges & wallets
+  "binance", "coinbase", "kraken", "okx", "bybit", "kucoin", "bitget", "mexc",
+  "gateio", "huobi", "ftx", "gemini", "bitstamp", "metamask", "trustwallet",
+  "ledger", "trezor", "exodus", "backpack",
+  // System & technical
+  "system", "bot", "root", "null", "undefined", "api", "server", "database",
+  "console", "error", "test", "debug", "config", "settings",
+  // Security & auth
+  "security", "secure", "verify", "verified", "verification", "auth", "login",
+  "password", "authenticate", "2fa", "mfa",
+  // Scam keywords
+  "giveaway", "airdrop", "claim", "free", "bonus", "prize", "winner", "reward",
+  "promo", "promotion", "discount", "offer", "limited", "urgent", "act_now",
+  "double", "triple", "multiply", "profit", "guaranteed", "investment",
+  // Financial
+  "bank", "wallet_support", "exchange", "transfer", "payment", "withdraw",
+  "deposit", "refund", "recovery", "restore",
+  // Impersonation patterns
+  "customer_service", "customerservice", "tech_support", "techsupport",
+  "helpdesk", "help_desk", "live_support", "livesupport",
+]);
 const INBOX_PULL_LIMIT = MAX_BATCH;
 const NICKNAME_CHANGE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -450,7 +482,7 @@ async function handleSendMessage(request, env) {
     return errorResponse(request, 'Invalid JSON payload');
   }
 
-  const { to, text, timestamp, ciphertext, nonce, version, tokenPreview } = body;
+  const { to, text, timestamp, ciphertext, nonce, version, tokenPreview, senderEncryptionKey: clientSenderKey } = body;
   if (!to || (!text && !ciphertext)) {
     return errorResponse(request, 'Missing fields');
   }
@@ -523,7 +555,8 @@ async function handleSendMessage(request, env) {
     timestamp: Number.isFinite(timestamp) ? Number(timestamp) : Date.now(),
     senderNickname,
     senderDisplayName,
-    senderEncryptionKey: senderProfile?.encryptionPublicKey || null,
+    // Prioritize client-provided key (always fresh) over profile key (may be stale due to KV eventual consistency)
+    senderEncryptionKey: clientSenderKey || senderProfile?.encryptionPublicKey || null,
     tokenPreview: sanitizedTokenPreview,
     expiresAt: Date.now() + INBOX_DELIVERY_TTL_MS,
   };
@@ -765,6 +798,16 @@ function normalizeNickname(value) {
   const trimmed = String(value).trim().replace(/^@+/, '').toLowerCase();
   if (!trimmed || !NICKNAME_REGEX.test(trimmed)) {
     return '';
+  }
+  // Check blocklist
+  if (NICKNAME_BLOCKLIST.has(trimmed)) {
+    return '';
+  }
+  // Check for blocklist partial matches
+  for (const blocked of NICKNAME_BLOCKLIST) {
+    if (trimmed.includes(blocked) || blocked.includes(trimmed)) {
+      return '';
+    }
   }
   return trimmed;
 }
