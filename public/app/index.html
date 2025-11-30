@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0" />
     
     <!-- Security Headers -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.skypack.dev https://cdn.jsdelivr.net https://esm.sh; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://solink.chat https://*.helius.xyz https://*.solana.com wss://*.helius.xyz wss://*.solana.com https://api.dexscreener.com https://frontend-api-v3.pump.fun https://ipfs.io https://arweave.net https://nftstorage.link https://cf-ipfs.com; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.skypack.dev https://cdn.jsdelivr.net https://esm.sh; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://solink.chat https://*.helius.xyz https://*.solana.com wss://*.helius.xyz wss://*.solana.com https://api.dexscreener.com https://frontend-api-v3.pump.fun https://ipfs.io https://arweave.net https://nftstorage.link https://cf-ipfs.com https://cdn.jsdelivr.net https://cdn.skypack.dev https://esm.sh; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     
     <!-- Primary Meta Tags -->
@@ -562,9 +562,11 @@
 
     <audio data-role="notification-sound" preload="auto" src="/media/inbox.mp3" type="audio/mpeg"></audio>
 
-    <script type="module" src="/js/chat.js?v=20241130z11"></script>
+    <script type="module" src="/js/chat.js?v=20241130z12"></script>
   </body>
 </html>
+
+
 
 
 
