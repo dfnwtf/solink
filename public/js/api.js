@@ -214,7 +214,7 @@ export async function verifySignature({ pubkey, nonce, signature }) {
   return result;
 }
 
-export async function sendMessage({ to, text, ciphertext, nonce, version, timestamp, tokenPreview }) {
+export async function sendMessage({ to, text, ciphertext, nonce, version, timestamp, tokenPreview, senderEncryptionKey }) {
   if (!to) {
     throw new Error('Missing recipient');
   }
@@ -229,6 +229,10 @@ export async function sendMessage({ to, text, ciphertext, nonce, version, timest
     payload.nonce = nonce;
     payload.version = Number.isFinite(version) && version > 0 ? Number(version) : 1;
     payload.text = text || '';
+    // Include sender's encryption key for recipient to decrypt
+    if (senderEncryptionKey) {
+      payload.senderEncryptionKey = senderEncryptionKey;
+    }
   } else {
     if (!text) {
       throw new Error('Missing message content');

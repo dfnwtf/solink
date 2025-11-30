@@ -3009,6 +3009,24 @@ button:disabled {
   font-weight: 600;
 }
 
+.bubble--nickname-change {
+  background: rgba(153, 69, 255, 0.1);
+  border: 1px dashed rgba(153, 69, 255, 0.4);
+}
+
+.bubble--nickname-change .bubble__text {
+  font-weight: 500;
+}
+
+.bubble--nickname-change .nickname-old {
+  color: var(--text-secondary);
+}
+
+.bubble--nickname-change .nickname-new {
+  color: #9945ff;
+  font-weight: 600;
+}
+
 .bubble__text {
   font-size: 0.95rem;
   line-height: 1.55;
@@ -3792,6 +3810,189 @@ button:disabled {
 
 .bubble--out .bubble__status::before {
   background: var(--accent-soft);
+}
+
+/* Reaction styles */
+.bubble {
+  position: relative;
+}
+
+.bubble__reaction-btn {
+  position: absolute;
+  right: -32px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--bg-tertiary);
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  z-index: 10;
+}
+
+.bubble--in .bubble__reaction-btn {
+  right: auto;
+  left: -32px;
+}
+
+.bubble:hover .bubble__reaction-btn {
+  opacity: 0.7;
+}
+
+.bubble__reaction-btn:hover {
+  opacity: 1 !important;
+  background: var(--bg-hover);
+  transform: translateY(-50%) scale(1.1);
+}
+
+.bubble__reaction-btn svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.bubble__reactions {
+  position: absolute;
+  bottom: -18px;
+  right: 4px;
+  display: flex;
+  gap: 3px;
+  z-index: 5;
+}
+
+.bubble--in .bubble__reactions {
+  right: auto;
+  left: 4px;
+}
+
+.bubble--has-reactions {
+  margin-bottom: 22px;
+}
+
+.reaction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.reaction-badge:hover {
+  background: var(--bg-hover);
+  transform: scale(1.05);
+}
+
+.reaction-badge--mine {
+  background: rgba(var(--accent-rgb), 0.2);
+  border-color: var(--accent);
+}
+
+.reaction-badge__emoji {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.reaction-badge__count {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.reaction-picker {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  transform: scale(0.9);
+  transform-origin: bottom left;
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 100;
+}
+
+.bubble--out .reaction-picker {
+  left: auto;
+  right: 0;
+  transform-origin: bottom right;
+}
+
+.reaction-picker.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.reaction-picker__btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 1.4rem;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reaction-picker__btn:hover {
+  background: var(--bg-hover);
+  transform: scale(1.2);
+}
+
+/* Mobile adjustments for reactions */
+@media (max-width: 768px) {
+  .bubble__reaction-btn {
+    right: -28px;
+    width: 24px;
+    height: 24px;
+  }
+  
+  .bubble--in .bubble__reaction-btn {
+    left: -28px;
+  }
+  
+  .bubble__reaction-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+  
+  .reaction-picker {
+    padding: 6px 10px;
+  }
+  
+  .reaction-picker__btn {
+    width: 32px;
+    height: 32px;
+    font-size: 1.2rem;
+  }
+}
+
+/* Touch devices - always show reaction button */
+@media (pointer: coarse) {
+  .bubble__reaction-btn {
+    opacity: 0.5;
+  }
 }
 
 .bubble__reply {
@@ -4642,8 +4843,161 @@ button:disabled {
   padding-inline: 2.5rem;
 }
 
+/* ===== EMOJI PICKER CUSTOM STYLES ===== */
 .picmo__popupContainer {
-  z-index: 120;
+  z-index: 120 !important;
+}
+
+/* Main picker container - override all possible selectors */
+.picmo__picker,
+.picmo-picker,
+[data-theme="dark"],
+div[class*="picmo"] {
+  --background-color: #151320 !important;
+  --secondary-background-color: #1a1829 !important;
+  --border-color: rgba(255, 255, 255, 0.1) !important;
+  --category-tab-color: rgba(255, 255, 255, 0.5) !important;
+  --category-tab-highlight-color: #9945ff !important;
+  --category-tab-active-color: #9945ff !important;
+  --text-color: #f0f0f0 !important;
+  --secondary-text-color: rgba(255, 255, 255, 0.6) !important;
+  --search-background-color: rgba(255, 255, 255, 0.06) !important;
+  --search-focus-background-color: rgba(255, 255, 255, 0.1) !important;
+  --search-placeholder-color: rgba(255, 255, 255, 0.4) !important;
+  --search-icon-color: rgba(255, 255, 255, 0.4) !important;
+  --hover-color: rgba(153, 69, 255, 0.2) !important;
+  --focus-indicator-color: #9945ff !important;
+  --focus-indicator-background-color: rgba(153, 69, 255, 0.2) !important;
+}
+
+/* Force background on picker */
+.picmo__picker {
+  background: #151320 !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6) !important;
+  overflow: visible !important;
+  min-width: 320px !important;
+}
+
+/* Popup container sizing */
+.picmo__popupContainer > div,
+.picmo__popupContent {
+  background: #151320 !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  overflow: hidden !important;
+}
+
+/* Header/search area */
+.picmo__header {
+  background: #1a1829 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Search input */
+.picmo__searchContainer input,
+input[class*="search"] {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 10px !important;
+  color: #f0f0f0 !important;
+}
+
+.picmo__searchContainer input:focus {
+  border-color: rgba(153, 69, 255, 0.5) !important;
+  box-shadow: 0 0 0 2px rgba(153, 69, 255, 0.2) !important;
+  outline: none !important;
+}
+
+/* Category tabs bar */
+.picmo__categoryButtons {
+  background: #1a1829 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Category tab buttons */
+.picmo__categoryButton,
+button[class*="category"] {
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+
+.picmo__categoryButton:hover {
+  background: rgba(153, 69, 255, 0.15) !important;
+  color: #9945ff !important;
+}
+
+.picmo__categoryButton[aria-selected="true"],
+.picmo__categoryButton.active {
+  background: rgba(153, 69, 255, 0.2) !important;
+  color: #9945ff !important;
+}
+
+/* Emoji grid area */
+.picmo__content,
+.picmo__emojiArea {
+  background: #151320 !important;
+}
+
+/* Category headers */
+.picmo__categoryName,
+h2[class*="category"] {
+  font-size: 0.7rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  color: rgba(255, 255, 255, 0.4) !important;
+  background: transparent !important;
+}
+
+/* Emoji buttons */
+.picmo__emoji,
+button[class*="emoji"] {
+  border-radius: 8px !important;
+  transition: all 0.15s ease !important;
+}
+
+.picmo__emoji:hover,
+button[class*="emoji"]:hover {
+  background: rgba(153, 69, 255, 0.25) !important;
+  transform: scale(1.15) !important;
+}
+
+/* Close button */
+.picmo__closeButton,
+button[aria-label="Close"] {
+  color: rgba(255, 255, 255, 0.6) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-radius: 50% !important;
+}
+
+.picmo__closeButton:hover {
+  background: rgba(255, 255, 255, 0.2) !important;
+  color: #fff !important;
+}
+
+/* Scrollbar */
+.picmo__content::-webkit-scrollbar,
+.picmo__emojiArea::-webkit-scrollbar {
+  width: 6px !important;
+}
+
+.picmo__content::-webkit-scrollbar-track,
+.picmo__emojiArea::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.picmo__content::-webkit-scrollbar-thumb,
+.picmo__emojiArea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border-radius: 3px !important;
+}
+
+.picmo__content::-webkit-scrollbar-thumb:hover,
+.picmo__emojiArea::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
 }
 
 .onboarding {
@@ -7229,3 +7583,10 @@ body.landing.landing--blank {
   }
 }
 
+/* Hide PWA install option on mobile devices */
+@media (max-width: 768px), (pointer: coarse) {
+  [data-role="install-app-option"],
+  [data-action="install-app"] {
+    display: none !important;
+  }
+}

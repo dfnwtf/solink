@@ -1,0 +1,105 @@
+<svg width="1000" height="1000" viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Base linear gradient (exact from hero) -->
+    <linearGradient id="bg-linear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#040306"/>
+      <stop offset="18%" stop-color="#05040a"/>
+      <stop offset="32%" stop-color="#0b1524"/>
+      <stop offset="45%" stop-color="#101d2a"/>
+      <stop offset="58%" stop-color="#0c121e"/>
+      <stop offset="70%" stop-color="#05080f"/>
+      <stop offset="100%" stop-color="#010103"/>
+    </linearGradient>
+
+    <!-- Dark corner glow (top-left) -->
+    <radialGradient id="glow-dark" cx="0.05" cy="0.05" r="0.45">
+      <stop offset="0%" stop-color="#020204" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#020204" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Purple glow -->
+    <radialGradient id="glow-purple" cx="0.70" cy="0.18" r="0.55">
+      <stop offset="0%" stop-color="#8752FF" stop-opacity="0.78"/>
+      <stop offset="60%" stop-color="#8752FF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Rose/pink glow -->
+    <radialGradient id="glow-rose" cx="0.58" cy="0.38" r="0.68">
+      <stop offset="0%" stop-color="#FF73AF" stop-opacity="0.7"/>
+      <stop offset="68%" stop-color="#FF73AF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Lilac glow -->
+    <radialGradient id="glow-lilac" cx="0.35" cy="0.25" r="0.7">
+      <stop offset="0%" stop-color="#B17BFF" stop-opacity="0.35"/>
+      <stop offset="70%" stop-color="#B17BFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Shadow bottom-left -->
+    <radialGradient id="shadow-bl" cx="0.20" cy="0.92" r="0.6">
+      <stop offset="0%" stop-color="#0C080D" stop-opacity="0.85"/>
+      <stop offset="55%" stop-color="#0C080D" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Shadow right -->
+    <radialGradient id="shadow-r" cx="0.95" cy="0.35" r="0.5">
+      <stop offset="0%" stop-color="#06040A" stop-opacity="0.92"/>
+      <stop offset="50%" stop-color="#06040A" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Shadow lower-right -->
+    <radialGradient id="shadow-lr" cx="0.86" cy="0.78" r="0.45">
+      <stop offset="0%" stop-color="#050408" stop-opacity="0.9"/>
+      <stop offset="45%" stop-color="#050408" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Shadow bottom -->
+    <radialGradient id="shadow-b" cx="0.55" cy="0.98" r="0.6">
+      <stop offset="0%" stop-color="#060408" stop-opacity="0.95"/>
+      <stop offset="60%" stop-color="#060408" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Grain texture -->
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="1" seed="6" stitchTiles="stitch" result="noise"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+  </defs>
+
+  <!-- Background layers (same order as CSS) -->
+  <rect width="1000" height="1000" fill="url(#bg-linear)"/>
+  <rect width="1000" height="1000" fill="url(#glow-dark)"/>
+  <rect width="1000" height="1000" fill="url(#glow-purple)" style="mix-blend-mode:screen"/>
+  <rect width="1000" height="1000" fill="url(#glow-rose)" style="mix-blend-mode:screen"/>
+  <rect width="1000" height="1000" fill="url(#glow-lilac)" style="mix-blend-mode:screen"/>
+  <rect width="1000" height="1000" fill="url(#shadow-bl)"/>
+  <rect width="1000" height="1000" fill="url(#shadow-r)"/>
+  <rect width="1000" height="1000" fill="url(#shadow-lr)"/>
+  <rect width="1000" height="1000" fill="url(#shadow-b)"/>
+  
+  <!-- Grain overlay -->
+  <rect width="1000" height="1000" filter="url(#grain)" opacity="0.33" style="mix-blend-mode:soft-light"/>
+
+  <!-- Crossing lines frame -->
+  <!-- Left vertical line -->
+  <line x1="200" y1="80" x2="200" y2="920" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <!-- Right vertical line -->
+  <line x1="800" y1="80" x2="800" y2="920" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <!-- Top horizontal line -->
+  <line x1="80" y1="200" x2="920" y2="200" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <!-- Bottom horizontal line -->
+  <line x1="80" y1="800" x2="920" y2="800" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+
+  <!-- SOLINK text centered -->
+  <text 
+    x="500" 
+    y="520" 
+    text-anchor="middle" 
+    dominant-baseline="middle"
+    font-family="'Space Grotesk', sans-serif" 
+    font-weight="500" 
+    font-size="115"
+    letter-spacing="0.15em"
+    fill="#FFFFFF">SOLINK</text>
+</svg>
+
