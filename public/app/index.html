@@ -7,11 +7,31 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     
+    <!-- Security Headers -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.skypack.dev https://cdn.jsdelivr.net https://esm.sh; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://solink.chat https://*.helius.xyz https://*.solana.com wss://*.helius.xyz wss://*.solana.com https://api.dexscreener.com https://frontend-api-v3.pump.fun https://ipfs.io https://arweave.net https://nftstorage.link https://cf-ipfs.com; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    
     <!-- Primary Meta Tags -->
     <title>SOLink — Web3 Messenger</title>
     <meta name="title" content="SOLink — Web3 Messenger" />
     <meta name="description" content="Secure, decentralized messaging on Solana. Connect your Phantom wallet to start chatting." />
     <meta name="robots" content="noindex, nofollow" />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://solink.chat/app/" />
+    <meta property="og:title" content="SOLink — Secure Web3 Messenger on Solana" />
+    <meta property="og:description" content="Decentralized, end-to-end encrypted messenger built on Solana. Chat securely wallet-to-wallet and send SOL directly in conversations." />
+    <meta property="og:image" content="https://solink.chat/app/og-image.png" />
+    <meta property="og:site_name" content="SOLink" />
+    <meta property="og:locale" content="en_US" />
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://solink.chat/app/" />
+    <meta property="twitter:title" content="SOLink — Secure Web3 Messenger on Solana" />
+    <meta property="twitter:description" content="Decentralized, end-to-end encrypted messenger built on Solana. Chat securely wallet-to-wallet and send SOL directly in conversations." />
+    <meta property="twitter:image" content="https://solink.chat/app/og-image.png" />
     
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -36,7 +56,7 @@
       .onboarding { display: none; }
     </style>
     
-    <link rel="stylesheet" href="/css/style.css?v=20241130z" />
+    <link rel="stylesheet" href="/css/style.css?v=20241130z9" />
     <script type="importmap">
       {
         "imports": {
@@ -232,6 +252,13 @@
                 <button type="button" class="ghost-button" data-action="import-data">Import</button>
               </div>
             </div>
+            <div class="settings-option" data-role="install-app-option" hidden>
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Install app</div>
+                <p class="settings-option__description">Add SOLink to your home screen for quick access.</p>
+              </div>
+              <button type="button" class="ghost-button" data-action="install-app-settings">Install</button>
+            </div>
             <div class="settings-option settings-option--logout">
               <div class="settings-option__meta">
                 <div class="settings-option__title">Log out</div>
@@ -240,7 +267,7 @@
               <button type="button" class="ghost-button ghost-button--danger" data-action="logout">Log out</button>
             </div>
           </div>
-          <input type="file" data-role="import-file" accept="application/json" hidden />
+          <input type="file" data-role="import-file" accept=".enc" hidden />
         </section>
       </section>
 
@@ -535,12 +562,14 @@
 
     <audio data-role="notification-sound" preload="auto" src="/media/inbox.mp3" type="audio/mpeg"></audio>
 
-    <script>
-      window.SOLINK_API_BASE = '/api';
-    </script>
-    <script type="module" src="/js/chat.js?v=20241130z5"></script>
+    <script type="module" src="/js/chat.js?v=20241130z11"></script>
   </body>
 </html>
+
+
+
+
+
 
 
 

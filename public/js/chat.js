@@ -62,6 +62,133 @@ async function hashData(data) {
   const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
   return new Uint8Array(hashBuffer);
 }
+
+// ============================================
+// Backup encryption/decryption with password
+// Uses PBKDF2 for key derivation + AES-GCM
+// ============================================
+
+const BACKUP_ENCRYPTION_VERSION = 1;
+const PBKDF2_ITERATIONS = 100000;
+
+async function deriveKeyFromPassword(password, salt) {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+  
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+// Helper: Uint8Array to base64 (handles large arrays)
+function uint8ArrayToBase64(bytes) {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+// Helper: base64 to Uint8Array
+function base64ToUint8Array(base64) {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function encryptBackupWithPassword(data, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKeyFromPassword(password, salt);
+  
+  const encoder = new TextEncoder();
+  const plaintext = encoder.encode(JSON.stringify(data));
+  
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    plaintext
+  );
+  
+  // Combine: version (1 byte) + salt (16 bytes) + iv (12 bytes) + ciphertext
+  const combined = new Uint8Array(1 + salt.length + iv.length + ciphertext.byteLength);
+  combined[0] = BACKUP_ENCRYPTION_VERSION;
+  combined.set(salt, 1);
+  combined.set(iv, 1 + salt.length);
+  combined.set(new Uint8Array(ciphertext), 1 + salt.length + iv.length);
+  
+  // Convert to base64 for storage (using helper to avoid stack overflow)
+  return uint8ArrayToBase64(combined);
+}
+
+async function decryptBackupWithPassword(encryptedBase64, password) {
+  try {
+    // Decode base64 (using helper to avoid stack overflow)
+    const combined = base64ToUint8Array(encryptedBase64);
+    
+    // Extract components
+    const version = combined[0];
+    if (version !== BACKUP_ENCRYPTION_VERSION) {
+      throw new Error('Unsupported backup encryption version');
+    }
+    
+    const salt = combined.slice(1, 17);
+    const iv = combined.slice(17, 29);
+    const ciphertext = combined.slice(29);
+    
+    const key = await deriveKeyFromPassword(password, salt);
+    
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      ciphertext
+    );
+    
+    const decoder = new TextDecoder();
+    return JSON.parse(decoder.decode(plaintext));
+  } catch (error) {
+    if (error.name === 'OperationError') {
+      throw new Error('WRONG_PASSWORD');
+    }
+    throw error;
+  }
+}
+
+function isEncryptedBackup(content) {
+  // Encrypted backups start with base64 that decodes to version byte
+  // Regular JSON backups start with { or whitespace
+  const trimmed = content.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return false;
+  }
+  try {
+    const decoded = atob(trimmed.slice(0, 4));
+    return decoded.charCodeAt(0) === BACKUP_ENCRYPTION_VERSION;
+  } catch {
+    return false;
+  }
+}
+
 import {
   Connection,
   PublicKey,
@@ -98,6 +225,7 @@ import {
   setSessionDurationMs,
   fetchTokenPreview,
   fetchDexPairPreview,
+  fetchLinkPreviewApi,
 } from "./api.js";
 import {
   upsertContact,
@@ -259,6 +387,8 @@ function cacheDom() {
   ui.navButtons = Array.from(document.querySelectorAll("[data-nav]"));
   ui.navReconnect = document.querySelector("[data-action=\"reconnect-wallet\"]");
   ui.navInstall = document.querySelector("[data-action=\"install-app\"]");
+  ui.installAppOption = document.querySelector("[data-role=\"install-app-option\"]");
+  ui.installAppSettingsBtn = document.querySelector("[data-action=\"install-app-settings\"]");
   ui.connectOverlay = document.querySelector("[data-role=\"connect-overlay\"]");
   ui.overlayConnectButton = document.querySelector("[data-role=\"connect-overlay\"] [data-action=\"connect-wallet\"]");
 
@@ -467,7 +597,7 @@ function bindEvents() {
   };
 
   const handleInstallClick = async () => {
-    const browser = ui.navInstall?.dataset.browser;
+    const browser = ui.navInstall?.dataset.browser || ui.installAppOption?.dataset.browser;
     
     // Firefox - show instructions
     if (browser === "firefox") {
@@ -496,6 +626,7 @@ function bindEvents() {
     if (outcome === "accepted") {
       showToast("SOLink installed successfully! 🎉");
       ui.navInstall?.setAttribute("hidden", "");
+      ui.installAppOption?.setAttribute("hidden", "");
     }
     
     // Clear the prompt - can only be used once
@@ -550,8 +681,9 @@ function bindEvents() {
   ui.navReconnect?.addEventListener("click", handleReconnectClick);
   ui.overlayConnectButton?.addEventListener("click", handleConnectClick);
   
-  // PWA Install button
+  // PWA Install buttons (nav rail + settings)
   ui.navInstall?.addEventListener("click", handleInstallClick);
+  ui.installAppSettingsBtn?.addEventListener("click", handleInstallClick);
 
   ui.searchForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -855,6 +987,84 @@ function showConfirmDialog(title, message) {
     modal.querySelector(".confirm-modal__backdrop").addEventListener("click", () => cleanup(false));
     modal.querySelector(".confirm-modal__btn--cancel").addEventListener("click", () => cleanup(false));
     modal.querySelector(".confirm-modal__btn--confirm").addEventListener("click", () => cleanup(true));
+  });
+}
+
+function showPasswordModal({ title, message, confirmText = "Confirm", showConfirm = false }) {
+  return new Promise((resolve) => {
+    const modal = document.createElement("div");
+    modal.className = "password-modal";
+    modal.innerHTML = `
+      <div class="password-modal__backdrop"></div>
+      <div class="password-modal__content">
+        <h3 class="password-modal__title">${title}</h3>
+        <p class="password-modal__message">${message}</p>
+        <div class="password-modal__field">
+          <input type="password" class="password-modal__input" placeholder="Enter password" autocomplete="new-password" />
+        </div>
+        ${showConfirm ? `
+        <div class="password-modal__field">
+          <input type="password" class="password-modal__input password-modal__input--confirm" placeholder="Confirm password" autocomplete="new-password" />
+        </div>
+        ` : ''}
+        <p class="password-modal__error" hidden></p>
+        <div class="password-modal__actions">
+          <button type="button" class="password-modal__btn password-modal__btn--cancel">Cancel</button>
+          <button type="button" class="password-modal__btn password-modal__btn--confirm">${confirmText}</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const input = modal.querySelector(".password-modal__input");
+    const confirmInput = modal.querySelector(".password-modal__input--confirm");
+    const errorEl = modal.querySelector(".password-modal__error");
+    const confirmBtn = modal.querySelector(".password-modal__btn--confirm");
+    
+    const showError = (msg) => {
+      errorEl.textContent = msg;
+      errorEl.hidden = false;
+    };
+    
+    const cleanup = (result) => {
+      modal.remove();
+      resolve(result);
+    };
+    
+    const submit = () => {
+      const password = input.value;
+      if (!password || password.length < 4) {
+        showError("Password must be at least 4 characters");
+        return;
+      }
+      if (showConfirm && confirmInput && password !== confirmInput.value) {
+        showError("Passwords do not match");
+        return;
+      }
+      cleanup(password);
+    };
+    
+    input.focus();
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        if (showConfirm && confirmInput) {
+          confirmInput.focus();
+        } else {
+          submit();
+        }
+      }
+      if (e.key === "Escape") cleanup(null);
+    });
+    
+    confirmInput?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+      if (e.key === "Escape") cleanup(null);
+    });
+    
+    modal.querySelector(".password-modal__backdrop").addEventListener("click", () => cleanup(null));
+    modal.querySelector(".password-modal__btn--cancel").addEventListener("click", () => cleanup(null));
+    confirmBtn.addEventListener("click", submit);
   });
 }
 
@@ -1853,6 +2063,12 @@ function createMessageBubble(message, highlightQueryText) {
       const tokenCard = createTokenPreviewBlock(message.meta.tokenPreview, tokenUrl);
       bubble.appendChild(tokenCard);
     }
+    
+    // Add link preview card if present (and no token preview)
+    if (message.meta?.linkPreview && !message.meta?.tokenPreview) {
+      const linkCard = createLinkPreviewBlock(message.meta.linkPreview);
+      bubble.appendChild(linkCard);
+    }
   }
 
   const meta = document.createElement("div");
@@ -1929,6 +2145,75 @@ function createReplyPreviewBlock(replyMeta) {
   wrapper.appendChild(author);
   wrapper.appendChild(text);
   return wrapper;
+}
+
+function createLinkPreviewBlock(preview) {
+  if (!preview || !preview.url) return document.createDocumentFragment();
+  
+  const card = document.createElement("a");
+  card.className = "link-preview";
+  card.href = preview.url;
+  card.target = "_blank";
+  card.rel = "noopener noreferrer";
+  
+  // Image section (if available)
+  if (preview.image) {
+    const imgWrapper = document.createElement("div");
+    imgWrapper.className = "link-preview__image";
+    const img = document.createElement("img");
+    img.src = preview.image;
+    img.alt = preview.title || '';
+    img.loading = "lazy";
+    img.onerror = function() {
+      imgWrapper.remove();
+    };
+    imgWrapper.appendChild(img);
+    card.appendChild(imgWrapper);
+  }
+  
+  // Content section
+  const content = document.createElement("div");
+  content.className = "link-preview__content";
+  
+  // Site name with favicon
+  const siteRow = document.createElement("div");
+  siteRow.className = "link-preview__site";
+  
+  if (preview.favicon) {
+    const favicon = document.createElement("img");
+    favicon.src = preview.favicon;
+    favicon.className = "link-preview__favicon";
+    favicon.width = 16;
+    favicon.height = 16;
+    favicon.onerror = function() { this.style.display = 'none'; };
+    siteRow.appendChild(favicon);
+  }
+  
+  const siteName = document.createElement("span");
+  siteName.textContent = preview.siteName || new URL(preview.url).hostname;
+  siteRow.appendChild(siteName);
+  content.appendChild(siteRow);
+  
+  // Title
+  if (preview.title) {
+    const title = document.createElement("div");
+    title.className = "link-preview__title";
+    title.textContent = preview.title;
+    content.appendChild(title);
+  }
+  
+  // Description
+  if (preview.description) {
+    const desc = document.createElement("div");
+    desc.className = "link-preview__desc";
+    desc.textContent = preview.description.length > 120 
+      ? preview.description.slice(0, 120) + '...' 
+      : preview.description;
+    content.appendChild(desc);
+  }
+  
+  card.appendChild(content);
+  return card;
 }
 
 function createTokenPreviewBlock(preview, tokenUrl = null) {
@@ -2738,6 +3023,66 @@ async function fetchDexPairPreviewSafe(pairAddress) {
   }
 }
 
+// Extract first generic URL from text (excluding token-specific URLs)
+function extractGenericUrl(text) {
+  const matches = text.match(URL_REGEX);
+  if (!matches) return null;
+  
+  for (const url of matches) {
+    // Skip token-specific URLs
+    if (PUMP_FUN_URL_REGEX.test(url) || 
+        DEXSCREENER_URL_REGEX.test(url) || 
+        TERMINAL_URL_REGEX.test(url) || 
+        AXIOM_URL_REGEX.test(url)) {
+      continue;
+    }
+    // Ensure it starts with http
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    // Handle www. URLs
+    if (url.startsWith('www.')) {
+      return 'https://' + url;
+    }
+  }
+  return null;
+}
+
+// Link preview cache to avoid duplicate requests
+const linkPreviewCache = new Map();
+const LINK_PREVIEW_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+async function fetchLinkPreview(url) {
+  if (!url) return null;
+  
+  // Check cache first
+  const cached = linkPreviewCache.get(url);
+  if (cached && Date.now() - cached.timestamp < LINK_PREVIEW_CACHE_TTL) {
+    return cached.data;
+  }
+  
+  try {
+    const data = await fetchLinkPreviewApi(url);
+    
+    // Cache the result
+    linkPreviewCache.set(url, { data, timestamp: Date.now() });
+    
+    return data;
+  } catch (error) {
+    console.warn('Failed to fetch link preview:', error);
+    return null;
+  }
+}
+
+async function fetchLinkPreviewSafe(url) {
+  try {
+    return await fetchLinkPreview(url);
+  } catch (error) {
+    console.warn('Link preview error:', error);
+    return null;
+  }
+}
+
 function formatNumber(num) {
   if (!num || isNaN(num)) return '—';
   const n = parseFloat(num);
@@ -2926,6 +3271,18 @@ async function handleExportData() {
       return;
     }
     
+    // Ask for encryption password
+    const password = await showPasswordModal({
+      title: "Encrypt Backup",
+      message: "Create a password to protect your backup. This password will be required to restore the backup.",
+      confirmText: "Export",
+      showConfirm: true
+    });
+    
+    if (!password) {
+      return; // User cancelled
+    }
+    
     // Get raw data without signature
     const dump = await exportLocalData(currentWallet);
     
@@ -2961,18 +3318,22 @@ async function handleExportData() {
     dump.signature = signatureBase58;
     dump.signedMessage = messageText;
     
-    const blob = new Blob([JSON.stringify(dump, null, 2)], {
-      type: "application/json",
+    // Encrypt the backup with password
+    showToast("Encrypting backup...");
+    const encryptedData = await encryptBackupWithPassword(dump, password);
+    
+    const blob = new Blob([encryptedData], {
+      type: "application/octet-stream",
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `solink-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    link.download = `solink-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.enc`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast("Backup exported & signed");
+    showToast("Encrypted backup exported");
   } catch (error) {
     console.error("Export failed", error);
     if (error.message?.includes('User rejected')) {
@@ -3022,7 +3383,7 @@ async function verifyBackupSignature(parsed, expectedWallet) {
   }
 }
 
-function handleImportFileChange(event) {
+async function handleImportFileChange(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
@@ -3040,7 +3401,31 @@ function handleImportFileChange(event) {
   const reader = new FileReader();
   reader.onload = async () => {
     try {
-      const parsed = JSON.parse(reader.result);
+      const content = reader.result;
+      // Ask for decryption password
+      const password = await showPasswordModal({
+        title: "Decrypt Backup",
+        message: "Enter the password used to encrypt this backup.",
+        confirmText: "Decrypt",
+        showConfirm: false
+      });
+      
+      if (!password) {
+        return; // User cancelled
+      }
+      
+      let parsed;
+      try {
+        showToast("Decrypting backup...");
+        parsed = await decryptBackupWithPassword(content, password);
+      } catch (decryptError) {
+        if (decryptError.message === 'WRONG_PASSWORD') {
+          showToast("Wrong password");
+        } else {
+          showToast("Failed to decrypt backup");
+        }
+        return;
+      }
       
       // Verify backup signature
       const verification = await verifyBackupSignature(parsed, currentWallet);
@@ -3289,6 +3674,7 @@ async function sendPreparedMessage({
   forwardMeta,
   tokenPreview,
   tokenUrl,
+  linkPreview,
 }) {
   if (!targetPubkey) {
     showToast("Select a chat first");
@@ -3346,6 +3732,7 @@ async function sendPreparedMessage({
       ...(replyMeta ? { replyTo: replyMeta } : {}),
       ...(forwardMeta ? { forwardedFrom: forwardMeta } : {}),
       ...(tokenPreview ? { tokenPreview, tokenUrl } : {}),
+      ...(linkPreview ? { linkPreview } : {}),
     },
   };
 
@@ -3409,6 +3796,7 @@ async function handleSendMessage(text) {
   // Check for pump.fun, DexScreener, Terminal, or Axiom link and fetch token preview
   let tokenPreview = null;
   let tokenUrl = null;
+  let linkPreview = null;
   
   // First check pump.fun (uses token address)
   const pumpFunAddress = extractPumpFunToken(trimmed);
@@ -3433,6 +3821,12 @@ async function handleSendMessage(text) {
         if (axiomPairAddress) {
           tokenPreview = await fetchDexPairPreviewSafe(axiomPairAddress);
           tokenUrl = extractAxiomUrl(trimmed);
+        } else {
+          // Check for generic URL and fetch link preview
+          const genericUrl = extractGenericUrl(trimmed);
+          if (genericUrl) {
+            linkPreview = await fetchLinkPreviewSafe(genericUrl);
+          }
         }
       }
     }
@@ -3445,6 +3839,7 @@ async function handleSendMessage(text) {
     replyMeta: replyEnvelope?.reply,
     tokenPreview,
     tokenUrl,
+    linkPreview,
   });
 }
 
@@ -3719,6 +4114,9 @@ function initPWA() {
     if (ui.navInstall) {
       ui.navInstall.setAttribute("hidden", "");
     }
+    if (ui.installAppOption) {
+      ui.installAppOption.setAttribute("hidden", "");
+    }
     return;
   }
 
@@ -3729,6 +4127,10 @@ function initPWA() {
       ui.navInstall.removeAttribute("hidden");
       ui.navInstall.dataset.browser = "firefox";
     }
+    if (ui.installAppOption) {
+      ui.installAppOption.removeAttribute("hidden");
+      ui.installAppOption.dataset.browser = "firefox";
+    }
     return;
   }
 
@@ -3738,6 +4140,10 @@ function initPWA() {
     if (ui.navInstall) {
       ui.navInstall.removeAttribute("hidden");
       ui.navInstall.dataset.browser = "safari";
+    }
+    if (ui.installAppOption) {
+      ui.installAppOption.removeAttribute("hidden");
+      ui.installAppOption.dataset.browser = "safari";
     }
     return;
   }
@@ -3753,6 +4159,11 @@ function initPWA() {
       ui.navInstall.removeAttribute("hidden");
       ui.navInstall.dataset.browser = "chromium";
     }
+    // Show install option in settings
+    if (ui.installAppOption) {
+      ui.installAppOption.removeAttribute("hidden");
+      ui.installAppOption.dataset.browser = "chromium";
+    }
     console.log("[PWA] Install prompt ready");
   });
 
@@ -3764,6 +4175,9 @@ function initPWA() {
     hideInstallPromotion();
     if (ui.navInstall) {
       ui.navInstall.setAttribute("hidden", "");
+    }
+    if (ui.installAppOption) {
+      ui.installAppOption.setAttribute("hidden", "");
     }
     showToast("SOLink installed! 🚀");
   });
