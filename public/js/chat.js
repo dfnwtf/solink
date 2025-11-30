@@ -917,9 +917,17 @@ function createContactElement(contact) {
   const meta = document.createElement("div");
   meta.className = "chat-item__meta";
 
+  const nameRow = document.createElement("div");
+  nameRow.className = "chat-item__name-row";
+
   const nameEl = document.createElement("div");
   nameEl.className = "chat-item__name";
   nameEl.textContent = contact.localName || shortenPubkey(contact.pubkey, 6);
+  nameRow.appendChild(nameEl);
+
+  if (contact.pinned) {
+    nameRow.appendChild(createPinBadge());
+  }
 
   const previewEl = document.createElement("div");
   previewEl.className = "chat-item__preview";
@@ -927,7 +935,7 @@ function createContactElement(contact) {
     ? `${contact.lastMessage.direction === "out" ? "You: " : ""}${truncateText(contact.lastMessage.text || "", 48)}`
     : "No messages yet";
 
-  meta.appendChild(nameEl);
+  meta.appendChild(nameRow);
   meta.appendChild(previewEl);
 
   const aside = document.createElement("div");
@@ -956,6 +964,22 @@ function createContactElement(contact) {
   });
 
   return item;
+}
+
+function createPinBadge() {
+  const badge = document.createElement("span");
+  badge.className = "chat-item__pin";
+  badge.title = "Pinned chat";
+  badge.setAttribute("aria-label", "Pinned chat");
+  badge.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M13 2a1 1 0 0 1 1 1v4.59l3.3 3.3A1 1 0 0 1 16.59 12H13v6.5l-1 3-1-3V12H7.41a1 1 0 0 1-.71-1.71L10 7.59V3a1 1 0 0 1 1-1z"
+      />
+    </svg>
+  `;
+  return badge;
 }
 
 function updateContactListSelection() {
