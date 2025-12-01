@@ -1858,11 +1858,11 @@ async function handleSyncChat(request, url, env) {
   }
 
   // Authenticate
-  const authResult = await authenticate(request, env);
-  if (!authResult.ok) {
-    return errorResponse(request, authResult.error, 401);
+  const token = extractBearerToken(request);
+  const walletAddress = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!walletAddress) {
+    return errorResponse(request, 'Unauthorized', 401);
   }
-  const walletAddress = authResult.pubkey;
 
   // R2 key structure: {walletAddress}/chats/{contactKey}.enc
   const r2Key = `${walletAddress}/chats/${contactKey}.enc`;
@@ -1936,11 +1936,11 @@ async function handleSyncChatsList(request, env) {
   }
 
   // Authenticate
-  const authResult = await authenticate(request, env);
-  if (!authResult.ok) {
-    return errorResponse(request, authResult.error, 401);
+  const token = extractBearerToken(request);
+  const walletAddress = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!walletAddress) {
+    return errorResponse(request, 'Unauthorized', 401);
   }
-  const walletAddress = authResult.pubkey;
 
   try {
     // List all chats for this wallet from R2
