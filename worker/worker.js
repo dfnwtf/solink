@@ -79,7 +79,7 @@ function buildCorsHeaders(request) {
   
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Max-Age': '86400',
   };
@@ -413,7 +413,13 @@ export default {
         return handlePushSubscribe(request, env);
       case '/api/push/unsubscribe':
         return handlePushUnsubscribe(request, env);
+      case '/api/sync/chats':
+        return handleSyncChatsList(request, env);
       default:
+        // Handle dynamic routes like /api/sync/chat/:contactKey
+        if (url.pathname.startsWith('/api/sync/chat/')) {
+          return handleSyncChat(request, url, env);
+        }
         return new Response('Not Found', { status: 404 });
     }
   },
@@ -1836,6 +1842,128 @@ function base64UrlDecode(str) {
   const padding = '='.repeat((4 - str.length % 4) % 4);
   const decoded = atob(str + padding);
   return Uint8Array.from(decoded, c => c.charCodeAt(0));
+}
+
+// ============================================
+// R2 SYNC HANDLERS - Cloud message storage
+// ============================================
+
+async function handleSyncChat(request, url, env) {
+  // Extract contactKey from URL: /api/sync/chat/:contactKey
+  const pathParts = url.pathname.split('/');
+  const contactKey = pathParts[pathParts.length - 1];
+  
+  if (!contactKey || !BASE58_REGEX.test(contactKey)) {
+    return errorResponse(request, 'Invalid contact key', 400);
+  }
+
+  // Authenticate
+  const authResult = await authenticate(request, env);
+  if (!authResult.ok) {
+    return errorResponse(request, authResult.error, 401);
+  }
+  const walletAddress = authResult.pubkey;
+
+  // R2 key structure: {walletAddress}/chats/{contactKey}.enc
+  const r2Key = `${walletAddress}/chats/${contactKey}.enc`;
+
+  if (request.method === 'PUT') {
+    // Save encrypted chat history to R2
+    try {
+      const body = await request.json();
+      if (!body.encrypted || typeof body.encrypted !== 'string') {
+        return errorResponse(request, 'Missing encrypted data', 400);
+      }
+
+      // Store in R2 with metadata
+      await env.SOLINK_STORAGE.put(r2Key, body.encrypted, {
+        customMetadata: {
+          contactKey,
+          updatedAt: Date.now().toString(),
+          version: '1'
+        }
+      });
+
+      console.log(`[Sync] Saved chat: ${walletAddress} -> ${contactKey}`);
+      return jsonResponse(request, { success: true, key: contactKey });
+    } catch (err) {
+      console.error('[Sync] Save error:', err);
+      return errorResponse(request, 'Failed to save', 500);
+    }
+
+  } else if (request.method === 'GET') {
+    // Retrieve encrypted chat history from R2
+    try {
+      const object = await env.SOLINK_STORAGE.get(r2Key);
+      
+      if (!object) {
+        return jsonResponse(request, { found: false });
+      }
+
+      const encrypted = await object.text();
+      const metadata = object.customMetadata || {};
+
+      return jsonResponse(request, {
+        found: true,
+        encrypted,
+        updatedAt: parseInt(metadata.updatedAt) || null,
+        version: metadata.version || '1'
+      });
+    } catch (err) {
+      console.error('[Sync] Get error:', err);
+      return errorResponse(request, 'Failed to retrieve', 500);
+    }
+
+  } else if (request.method === 'DELETE') {
+    // Delete chat history from R2
+    try {
+      await env.SOLINK_STORAGE.delete(r2Key);
+      console.log(`[Sync] Deleted chat: ${walletAddress} -> ${contactKey}`);
+      return jsonResponse(request, { success: true });
+    } catch (err) {
+      console.error('[Sync] Delete error:', err);
+      return errorResponse(request, 'Failed to delete', 500);
+    }
+
+  } else {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+}
+
+async function handleSyncChatsList(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  // Authenticate
+  const authResult = await authenticate(request, env);
+  if (!authResult.ok) {
+    return errorResponse(request, authResult.error, 401);
+  }
+  const walletAddress = authResult.pubkey;
+
+  try {
+    // List all chats for this wallet from R2
+    const prefix = `${walletAddress}/chats/`;
+    const listed = await env.SOLINK_STORAGE.list({ prefix, limit: 1000 });
+
+    const chats = listed.objects.map(obj => {
+      // Extract contact key from path: {wallet}/chats/{contactKey}.enc
+      const filename = obj.key.replace(prefix, '');
+      const contactKey = filename.replace('.enc', '');
+      return {
+        contactKey,
+        updatedAt: parseInt(obj.customMetadata?.updatedAt) || obj.uploaded?.getTime() || null,
+        size: obj.size
+      };
+    });
+
+    console.log(`[Sync] Listed ${chats.length} chats for ${walletAddress}`);
+    return jsonResponse(request, { chats });
+  } catch (err) {
+    console.error('[Sync] List error:', err);
+    return errorResponse(request, 'Failed to list chats', 500);
+  }
 }
 
 export { InboxDurable };

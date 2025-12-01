@@ -226,6 +226,10 @@ import {
   fetchTokenPreview,
   fetchDexPairPreview,
   fetchLinkPreviewApi,
+  syncChatToCloud,
+  loadChatFromCloud,
+  loadChatListFromCloud,
+  deleteChatFromCloud,
 } from "./api.js";
 import {
   upsertContact,
@@ -480,6 +484,218 @@ function handleSyncScannerReport(data) {
   }
 }
 
+// ============================================
+// R2 CLOUD SYNC - Message history synchronization
+// ============================================
+
+const CLOUD_SYNC_ENABLED = true; // Feature flag
+const CLOUD_SYNC_DEBOUNCE_MS = 2000; // Debounce sync calls
+const cloudSyncTimers = new Map(); // contactKey -> timeoutId
+
+/**
+ * Encrypt messages array for cloud storage
+ * Uses the same encryption as message sending
+ */
+async function encryptChatHistoryForCloud(contactKey, messages) {
+  if (!messages || !messages.length) return null;
+  
+  try {
+    // Get encryption keys
+    const keys = await getEncryptionKeys();
+    if (!keys?.secretKey) {
+      console.warn("[CloudSync] No encryption keys available");
+      return null;
+    }
+    
+    // Prepare data - only store essential fields
+    const data = messages.map(m => ({
+      id: m.id,
+      text: m.text,
+      direction: m.direction,
+      timestamp: m.timestamp,
+      status: m.status,
+      meta: m.meta || {}
+    }));
+    
+    const plaintext = JSON.stringify({ contactKey, messages: data, syncedAt: Date.now() });
+    const plaintextBytes = new TextEncoder().encode(plaintext);
+    
+    // Encrypt with NaCl secretbox (same key as messages)
+    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+    const secretKeyBytes = typeof keys.secretKey === 'string' 
+      ? decodeBase58(keys.secretKey) 
+      : keys.secretKey;
+    
+    // Use first 32 bytes of secret key for secretbox
+    const encryptionKey = secretKeyBytes.slice(0, 32);
+    const encrypted = nacl.secretbox(plaintextBytes, nonce, encryptionKey);
+    
+    // Combine nonce + encrypted data
+    const combined = new Uint8Array(nonce.length + encrypted.length);
+    combined.set(nonce);
+    combined.set(encrypted, nonce.length);
+    
+    // Return as base64
+    return btoa(String.fromCharCode(...combined));
+  } catch (error) {
+    console.error("[CloudSync] Encryption error:", error);
+    return null;
+  }
+}
+
+/**
+ * Decrypt chat history from cloud storage
+ */
+async function decryptChatHistoryFromCloud(encryptedBase64) {
+  if (!encryptedBase64) return null;
+  
+  try {
+    const keys = await getEncryptionKeys();
+    if (!keys?.secretKey) {
+      console.warn("[CloudSync] No encryption keys for decryption");
+      return null;
+    }
+    
+    // Decode base64
+    const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+    
+    // Split nonce and encrypted data
+    const nonce = combined.slice(0, nacl.secretbox.nonceLength);
+    const encrypted = combined.slice(nacl.secretbox.nonceLength);
+    
+    // Decrypt
+    const secretKeyBytes = typeof keys.secretKey === 'string' 
+      ? decodeBase58(keys.secretKey) 
+      : keys.secretKey;
+    const encryptionKey = secretKeyBytes.slice(0, 32);
+    
+    const decrypted = nacl.secretbox.open(encrypted, nonce, encryptionKey);
+    if (!decrypted) {
+      console.warn("[CloudSync] Decryption failed - wrong key?");
+      return null;
+    }
+    
+    const plaintext = new TextDecoder().decode(decrypted);
+    return JSON.parse(plaintext);
+  } catch (error) {
+    console.error("[CloudSync] Decryption error:", error);
+    return null;
+  }
+}
+
+/**
+ * Sync a chat to cloud (debounced)
+ */
+function scheduleChatSync(contactKey) {
+  if (!CLOUD_SYNC_ENABLED || !contactKey || contactKey === SCANNER_CONTACT_KEY) return;
+  if (!getSessionToken()) return; // Not authenticated
+  
+  // Clear existing timer
+  if (cloudSyncTimers.has(contactKey)) {
+    clearTimeout(cloudSyncTimers.get(contactKey));
+  }
+  
+  // Schedule new sync
+  const timerId = setTimeout(() => {
+    cloudSyncTimers.delete(contactKey);
+    performChatSync(contactKey);
+  }, CLOUD_SYNC_DEBOUNCE_MS);
+  
+  cloudSyncTimers.set(contactKey, timerId);
+}
+
+/**
+ * Perform actual sync to cloud
+ */
+async function performChatSync(contactKey) {
+  try {
+    const messages = state.messages.get(contactKey) || [];
+    if (!messages.length) return;
+    
+    const encrypted = await encryptChatHistoryForCloud(contactKey, messages);
+    if (!encrypted) return;
+    
+    await syncChatToCloud(contactKey, encrypted);
+    console.log(`[CloudSync] Synced ${messages.length} messages for ${contactKey.slice(0, 8)}...`);
+  } catch (error) {
+    console.warn("[CloudSync] Sync failed:", error.message);
+    // Don't throw - sync failures are non-critical
+  }
+}
+
+/**
+ * Restore chat from cloud if local is empty
+ */
+async function restoreChatFromCloudIfNeeded(contactKey) {
+  if (!CLOUD_SYNC_ENABLED || !contactKey || contactKey === SCANNER_CONTACT_KEY) return false;
+  if (!getSessionToken()) return false;
+  
+  try {
+    // Check if local has messages
+    const localMessages = await getMessagesForContact(contactKey);
+    if (localMessages && localMessages.length > 0) {
+      return false; // Local has data, no need to restore
+    }
+    
+    // Try to load from cloud
+    const cloudData = await loadChatFromCloud(contactKey);
+    if (!cloudData?.found || !cloudData.encrypted) {
+      return false; // No cloud data
+    }
+    
+    // Decrypt
+    const decrypted = await decryptChatHistoryFromCloud(cloudData.encrypted);
+    if (!decrypted?.messages?.length) {
+      return false;
+    }
+    
+    console.log(`[CloudSync] Restoring ${decrypted.messages.length} messages from cloud for ${contactKey.slice(0, 8)}...`);
+    
+    // Save to IndexedDB
+    for (const msg of decrypted.messages) {
+      await addMessage({ ...msg, contactKey });
+    }
+    
+    // Update state
+    state.messages.set(contactKey, decrypted.messages);
+    
+    return true;
+  } catch (error) {
+    console.warn("[CloudSync] Restore failed:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Restore all chats from cloud (called on first load with empty DB)
+ */
+async function restoreAllChatsFromCloud() {
+  if (!CLOUD_SYNC_ENABLED) return;
+  if (!getSessionToken()) return;
+  
+  try {
+    console.log("[CloudSync] Checking for cloud backup...");
+    const result = await loadChatListFromCloud();
+    
+    if (!result?.chats?.length) {
+      console.log("[CloudSync] No cloud backup found");
+      return;
+    }
+    
+    console.log(`[CloudSync] Found ${result.chats.length} chats in cloud`);
+    
+    for (const chat of result.chats) {
+      await restoreChatFromCloudIfNeeded(chat.contactKey);
+    }
+    
+    // Refresh UI
+    await refreshContacts();
+    
+  } catch (error) {
+    console.warn("[CloudSync] Full restore failed:", error.message);
+  }
+}
+
 // Token Scanner
 const SCANNER_CONTACT_KEY = "__SOLINK_SCANNER__";
 const SCANNER_API_URL = "https://dfn.wtf/api/http-report";
@@ -611,6 +827,11 @@ async function loadWorkspace(walletPubkey) {
   renderContactList();
   await initializeProfile();
   await refreshContacts();
+  
+  // Try to restore chats from cloud if local DB is empty
+  restoreAllChatsFromCloud().catch(err => {
+    console.warn("[CloudSync] Background restore failed:", err.message);
+  });
 }
 
 function cacheDom() {
@@ -3489,6 +3710,9 @@ function appendMessageToState(pubkey, message) {
   }
   list.sort((a, b) => a.timestamp - b.timestamp);
   state.messages.set(pubkey, list);
+  
+  // Schedule cloud sync (debounced)
+  scheduleChatSync(pubkey);
 }
 
 
@@ -6157,6 +6381,16 @@ async function setActiveContact(pubkey) {
   void ensureSessionSecret(normalized);
   void hydrateContactProfile(normalized);
   await loadMessages(normalized);
+  
+  // Try to restore from cloud if local is empty
+  const localMsgs = state.messages.get(normalized) || [];
+  if (localMsgs.length === 0) {
+    const restored = await restoreChatFromCloudIfNeeded(normalized);
+    if (restored) {
+      await loadMessages(normalized); // Reload after restore
+    }
+  }
+  
   await markMessagesRead(normalized);
   await refreshContacts(false);
   updateContactHeader();
