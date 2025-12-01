@@ -787,6 +787,12 @@ button:disabled {
   transform: translateY(-1px);
 }
 
+.ghost-icon-button.is-active {
+  border-color: rgba(140, 91, 255, 0.85);
+  background: rgba(140, 91, 255, 0.2);
+  box-shadow: var(--shadow-float);
+}
+
 .primary-button {
   display: inline-flex;
   align-items: center;

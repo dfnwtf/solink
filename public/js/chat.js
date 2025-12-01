@@ -1,4 +1,5 @@
 import nacl from "https://cdn.skypack.dev/tweetnacl@1.0.3?min";
+import { createPopup } from "https://cdn.jsdelivr.net/npm/@picmo/popup-picker@5.8.5/+esm";
 import {
   initApp,
   onStateChange,
@@ -74,6 +75,7 @@ let toastTimer = null;
 let pollLoopShouldRun = false;
 let pollLoopPromise = null;
 let pollAbortController = null;
+let emojiPicker = null;
 
 function sanitizeNamespace(value) {
   if (!value) return "guest";
@@ -142,6 +144,7 @@ function cacheDom() {
   ui.messageInput = document.querySelector("[data-role=\"message-input\"]");
   ui.charCounter = document.querySelector('[data-role="char-counter"]');
   ui.sendButton = document.querySelector("[data-action=\"send-message\"]");
+  ui.emojiButton = document.querySelector("[data-action=\"toggle-emoji\"]");
   ui.composer = document.querySelector("[data-role=\"composer\"]");
 
   ui.infoPanel = document.querySelector("[data-role=\"info-panel\"]");
@@ -313,6 +316,15 @@ function bindEvents() {
       if (ui.sendButton?.disabled) return;
       ui.sendButton.click();
     }
+  });
+
+  ui.emojiButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (ui.emojiButton.disabled) return;
+    if (!emojiPicker) {
+      initializeEmojiPicker();
+    }
+    toggleEmojiPicker();
   });
 
   ui.sendButton?.addEventListener("click", async () => {
@@ -1145,6 +1157,80 @@ function escapeRegExp(text) {
 function toggleComposer(enabled) {
   if (ui.messageInput) ui.messageInput.disabled = !enabled;
   if (ui.sendButton) ui.sendButton.disabled = !enabled;
+  if (ui.emojiButton) {
+    ui.emojiButton.disabled = !enabled;
+  }
+  if (!enabled && emojiPicker?.isOpen) {
+    emojiPicker.close();
+  }
+}
+
+function insertEmojiAtCursor(emojiChar) {
+  if (!ui.messageInput || !emojiChar) return;
+  const input = ui.messageInput;
+  const start = Math.max(input.selectionStart ?? input.value.length, 0);
+  const end = Math.max(input.selectionEnd ?? input.value.length, 0);
+  const before = input.value.slice(0, start);
+  const after = input.value.slice(end);
+  input.value = `${before}${emojiChar}${after}`;
+  const cursor = before.length + emojiChar.length;
+  requestAnimationFrame(() => {
+    input.setSelectionRange(cursor, cursor);
+    input.focus();
+    handleMessageInput();
+  });
+}
+
+function initializeEmojiPicker() {
+  if (!ui.emojiButton || emojiPicker) return;
+  emojiPicker = createPopup(
+    {
+      emojiSize: "1.6rem",
+      showPreview: false,
+      showVariants: false,
+      showSearch: true,
+      showRecents: true,
+      theme: "dark",
+    },
+    {
+      referenceElement: ui.emojiButton,
+      position: "top-end",
+      rootElement: document.body,
+    },
+  );
+
+  emojiPicker.addEventListener("emoji:select", (selection) => {
+    const emojiChar =
+      selection?.emoji ||
+      selection?.unicode ||
+      selection?.label ||
+      selection?.detail?.emoji ||
+      selection?.detail?.unicode ||
+      selection?.detail?.selection?.emoji;
+    if (!emojiChar) return;
+    insertEmojiAtCursor(emojiChar);
+    emojiPicker.close();
+  });
+
+  emojiPicker.addEventListener("picker:open", () => {
+    ui.emojiButton?.classList.add("is-active");
+  });
+
+  emojiPicker.addEventListener("picker:close", () => {
+    ui.emojiButton?.classList.remove("is-active");
+    if (!ui.messageInput?.disabled) {
+      ui.messageInput?.focus();
+    }
+  });
+}
+
+function toggleEmojiPicker() {
+  if (!emojiPicker) return;
+  if (emojiPicker.isOpen) {
+    emojiPicker.close();
+  } else {
+    emojiPicker.open({ triggerElement: ui.emojiButton, referenceElement: ui.emojiButton });
+  }
 }
 
 function handleMessageInput() {
@@ -1801,6 +1887,7 @@ async function initialize() {
   setActiveNav(state.activeNav);
   setSidebarView(state.sidebarView);
   bindEvents();
+  initializeEmojiPicker();
   handleMessageInput();
   toggleComposer(false);
   registerDebugHelpers();
