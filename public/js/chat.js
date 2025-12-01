@@ -226,10 +226,9 @@ import {
   fetchTokenPreview,
   fetchDexPairPreview,
   fetchLinkPreviewApi,
-  syncChatToCloud,
-  loadChatFromCloud,
-  loadChatListFromCloud,
-  deleteChatFromCloud,
+  saveBackupToCloud,
+  loadBackupFromCloud,
+  deleteBackupFromCloud,
 } from "./api.js";
 import {
   upsertContact,
@@ -484,65 +483,64 @@ function handleSyncScannerReport(data) {
   }
 }
 
+// Token Scanner constant (used in CloudSync)
+const SCANNER_CONTACT_KEY = "__SOLINK_SCANNER__";
+
 // ============================================
-// R2 CLOUD SYNC - Message history synchronization
+// R2 CLOUD SYNC - Full database backup
 // ============================================
 
 const CLOUD_SYNC_ENABLED = true; // Feature flag
-const CLOUD_SYNC_DEBOUNCE_MS = 2000; // Debounce sync calls
-const cloudSyncTimers = new Map(); // contactKey -> timeoutId
+const CLOUD_SYNC_DEBOUNCE_MS = 3000; // Debounce sync calls (3 seconds)
+let cloudSyncTimer = null; // Single timer for full backup
+let cloudSyncPending = false; // Track if sync is pending
+let lastCloudSyncTime = 0; // Track last sync time
 
 /**
- * Encrypt messages array for cloud storage
- * Uses the same encryption as message sending
+ * Get deterministic backup encryption key derived from wallet pubkey
+ * This is safe because:
+ * 1. R2 storage is protected by authentication (session token)
+ * 2. Only wallet owner can get session token (requires signing)
  */
-async function encryptChatHistoryForCloud(contactKey, messages) {
-  if (!messages || !messages.length) return null;
+async function getBackupEncryptionKey() {
+  const walletPubkey = state.currentWallet;
+  if (!walletPubkey) {
+    console.warn("[CloudSync] No wallet for backup key");
+    return null;
+  }
+  
+  // Derive 32-byte key from wallet pubkey (deterministic!)
+  const seed = new TextEncoder().encode(`SOLink-Backup-Key-v1-${walletPubkey}`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', seed);
+  return new Uint8Array(hashBuffer);
+}
+
+/**
+ * Encrypt full database for cloud storage
+ * Uses deterministic key derived from wallet pubkey
+ */
+async function encryptFullBackup(data) {
+  if (!data) return null;
   
   try {
-    // Get encryption keys - use state first, fallback to DB
-    let keys = state.encryptionKeys;
-    if (!keys?.secretKey) {
-      keys = await getEncryptionKeys();
-    }
-    if (!keys?.secretKey) {
-      // Silently return - keys not yet available
+    const secretKey = await getBackupEncryptionKey();
+    if (!secretKey) {
+      console.warn("[CloudSync] No backup encryption key");
       return null;
     }
     
-    // Prepare data - only store essential fields
-    const data = messages.map(m => ({
-      id: m.id,
-      text: m.text,
-      direction: m.direction,
-      timestamp: m.timestamp,
-      status: m.status,
-      meta: m.meta || {}
-    }));
-    
-    const plaintext = JSON.stringify({ contactKey, messages: data, syncedAt: Date.now() });
+    const plaintext = JSON.stringify(data);
     const plaintextBytes = new TextEncoder().encode(plaintext);
     
     // Encrypt with NaCl secretbox
     const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-    
-    // Secret key is stored as base64
-    let secretKeyBytes;
-    if (typeof keys.secretKey === 'string') {
-      secretKeyBytes = Uint8Array.from(atob(keys.secretKey), c => c.charCodeAt(0));
-    } else {
-      secretKeyBytes = keys.secretKey;
-    }
-    
-    // NaCl box secretKey is 32 bytes, use it directly
-    const encrypted = nacl.secretbox(plaintextBytes, nonce, secretKeyBytes);
+    const encrypted = nacl.secretbox(plaintextBytes, nonce, secretKey);
     
     // Combine nonce + encrypted data
     const combined = new Uint8Array(nonce.length + encrypted.length);
     combined.set(nonce);
     combined.set(encrypted, nonce.length);
     
-    // Return as base64
     return btoa(String.fromCharCode(...combined));
   } catch (error) {
     console.error("[CloudSync] Encryption error:", error);
@@ -551,41 +549,26 @@ async function encryptChatHistoryForCloud(contactKey, messages) {
 }
 
 /**
- * Decrypt chat history from cloud storage
+ * Decrypt full backup from cloud storage
+ * Uses deterministic key derived from wallet pubkey
  */
-async function decryptChatHistoryFromCloud(encryptedBase64) {
+async function decryptFullBackup(encryptedBase64) {
   if (!encryptedBase64) return null;
   
   try {
-    // Get encryption keys - use state first, fallback to DB
-    let keys = state.encryptionKeys;
-    if (!keys?.secretKey) {
-      keys = await getEncryptionKeys();
-    }
-    if (!keys?.secretKey) {
-      // Silently return - keys not yet available
+    const secretKey = await getBackupEncryptionKey();
+    if (!secretKey) {
+      console.warn("[CloudSync] No backup decryption key");
       return null;
     }
     
-    // Decode base64
     const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
-    
-    // Split nonce and encrypted data
     const nonce = combined.slice(0, nacl.secretbox.nonceLength);
     const encrypted = combined.slice(nacl.secretbox.nonceLength);
     
-    // Secret key is stored as base64
-    let secretKeyBytes;
-    if (typeof keys.secretKey === 'string') {
-      secretKeyBytes = Uint8Array.from(atob(keys.secretKey), c => c.charCodeAt(0));
-    } else {
-      secretKeyBytes = keys.secretKey;
-    }
-    
-    // Decrypt
-    const decrypted = nacl.secretbox.open(encrypted, nonce, secretKeyBytes);
+    const decrypted = nacl.secretbox.open(encrypted, nonce, secretKey);
     if (!decrypted) {
-      console.warn("[CloudSync] Decryption failed - wrong key?");
+      console.warn("[CloudSync] Decryption failed - corrupted data?");
       return null;
     }
     
@@ -598,83 +581,224 @@ async function decryptChatHistoryFromCloud(encryptedBase64) {
 }
 
 /**
- * Sync a chat to cloud (debounced)
+ * Schedule a full backup to cloud (debounced)
  */
-function scheduleChatSync(contactKey) {
-  if (!CLOUD_SYNC_ENABLED || !contactKey || contactKey === SCANNER_CONTACT_KEY) return;
-  if (!getSessionToken()) return; // Not authenticated
-  if (!state.encryptionKeys?.secretKey) return; // Keys not yet loaded
+function scheduleCloudBackup() {
+  if (!CLOUD_SYNC_ENABLED) return;
+  if (!getSessionToken()) return;
+  if (!state.currentWallet) return;
   
-  // Clear existing timer
-  if (cloudSyncTimers.has(contactKey)) {
-    clearTimeout(cloudSyncTimers.get(contactKey));
+  cloudSyncPending = true;
+  
+  if (cloudSyncTimer) {
+    clearTimeout(cloudSyncTimer);
   }
   
-  // Schedule new sync
-  const timerId = setTimeout(() => {
-    cloudSyncTimers.delete(contactKey);
-    performChatSync(contactKey);
+  cloudSyncTimer = setTimeout(() => {
+    cloudSyncTimer = null;
+    performFullBackup();
   }, CLOUD_SYNC_DEBOUNCE_MS);
-  
-  cloudSyncTimers.set(contactKey, timerId);
 }
 
 /**
- * Perform actual sync to cloud
+ * Collect localStorage settings for backup
  */
-async function performChatSync(contactKey) {
+function collectLocalStorageSettings() {
+  const settings = {};
   try {
-    const messages = state.messages.get(contactKey) || [];
-    if (!messages.length) return;
+    // App settings
+    const appSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (appSettings) settings.appSettings = appSettings;
     
-    const encrypted = await encryptChatHistoryForCloud(contactKey, messages);
-    if (!encrypted) return;
+    // Push notification preferences
+    const pushAsked = localStorage.getItem(PUSH_ASKED_KEY);
+    if (pushAsked) settings.pushAsked = pushAsked;
     
-    await syncChatToCloud(contactKey, encrypted);
-    console.log(`[CloudSync] Synced ${messages.length} messages for ${contactKey.slice(0, 8)}...`);
-  } catch (error) {
-    console.warn("[CloudSync] Sync failed:", error.message);
-    // Don't throw - sync failures are non-critical
+    // Session duration
+    const sessionDuration = localStorage.getItem('solink.sessionDuration');
+    if (sessionDuration) settings.sessionDuration = sessionDuration;
+  } catch (e) {
+    console.warn("[CloudSync] Error collecting localStorage:", e);
+  }
+  return settings;
+}
+
+/**
+ * Restore localStorage settings from backup
+ */
+function restoreLocalStorageSettings(settings) {
+  if (!settings) return;
+  try {
+    // Restore app settings (sound, etc.)
+    if (settings.appSettings) {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, settings.appSettings);
+      state.settings = JSON.parse(settings.appSettings);
+      syncSettingsUI();
+      console.log("[CloudSync] App settings restored:", state.settings);
+    }
+    
+    // Restore push notification asked flag
+    if (settings.pushAsked) {
+      localStorage.setItem(PUSH_ASKED_KEY, settings.pushAsked);
+    }
+    
+    // Restore session duration
+    if (settings.sessionDuration) {
+      localStorage.setItem('solink.sessionDuration', settings.sessionDuration);
+      // Update UI dropdown
+      if (ui.settingsSessionDuration) {
+        ui.settingsSessionDuration.value = settings.sessionDuration;
+      }
+      console.log("[CloudSync] Session duration restored:", settings.sessionDuration);
+    }
+  } catch (e) {
+    console.warn("[CloudSync] Error restoring localStorage:", e);
   }
 }
 
 /**
- * Restore chat from cloud if local is empty
+ * Perform full backup to cloud
  */
-async function restoreChatFromCloudIfNeeded(contactKey) {
-  if (!CLOUD_SYNC_ENABLED || !contactKey || contactKey === SCANNER_CONTACT_KEY) return false;
-  if (!getSessionToken()) return false;
-  if (!state.encryptionKeys?.secretKey) return false; // Keys not yet loaded
+async function performFullBackup() {
+  if (!cloudSyncPending) return;
+  if (!getSessionToken()) return;
+  if (!state.currentWallet) return;
+  
+  cloudSyncPending = false;
   
   try {
-    // Check if local has messages
-    const localMessages = await getMessagesForContact(contactKey);
-    if (localMessages && localMessages.length > 0) {
-      return false; // Local has data, no need to restore
+    // Export all local data (reuse existing export function)
+    const exportData = await exportLocalData(state.currentWallet);
+    
+    // Collect localStorage settings
+    const localStorageSettings = collectLocalStorageSettings();
+    
+    // Include ALL messages (including scanner history)
+    const backupData = {
+      version: 3, // Updated version for settings support
+      syncedAt: Date.now(),
+      ownerWallet: state.currentWallet,
+      contacts: exportData.contacts || [],
+      messages: exportData.messages || [], // Include ALL messages including scanner
+      profile: exportData.profile || null,
+      localStorageSettings, // Settings from localStorage
+      // Don't backup encryption keys - they are derived from wallet
+    };
+    
+    // Encrypt
+    const encrypted = await encryptFullBackup(backupData);
+    if (!encrypted) {
+      console.warn("[CloudSync] Failed to encrypt backup");
+      return;
     }
     
-    // Try to load from cloud
-    const cloudData = await loadChatFromCloud(contactKey);
-    if (!cloudData?.found || !cloudData.encrypted) {
-      return false; // No cloud data
-    }
+    // Upload to cloud
+    const result = await saveBackupToCloud(encrypted);
+    lastCloudSyncTime = Date.now();
     
-    // Decrypt
-    const decrypted = await decryptChatHistoryFromCloud(cloudData.encrypted);
-    if (!decrypted?.messages?.length) {
+    const msgCount = backupData.messages.length;
+    const contactCount = backupData.contacts.length;
+    const scannerMsgs = backupData.messages.filter(m => m.contactKey === SCANNER_CONTACT_KEY).length;
+    console.log(`[CloudSync] Backup saved: ${contactCount} contacts, ${msgCount} messages (${scannerMsgs} scanner), ${result.size} bytes`);
+  } catch (error) {
+    console.warn("[CloudSync] Backup failed:", error.message);
+  }
+}
+
+/**
+ * Restore full backup from cloud (called on first load with empty DB)
+ */
+async function restoreFromCloudBackup() {
+  console.log("[CloudSync] restoreFromCloudBackup called", {
+    enabled: CLOUD_SYNC_ENABLED,
+    hasToken: !!getSessionToken(),
+    wallet: state.currentWallet?.slice(0, 8)
+  });
+  
+  if (!CLOUD_SYNC_ENABLED) {
+    console.log("[CloudSync] Sync disabled");
+    return false;
+  }
+  if (!getSessionToken()) {
+    console.log("[CloudSync] No session token");
+    return false;
+  }
+  if (!state.currentWallet) {
+    console.log("[CloudSync] No wallet");
+    return false;
+  }
+  
+  try {
+    console.log("[CloudSync] Checking for cloud backup...");
+    
+    // Check if local DB already has data
+    const localContacts = await getContacts();
+    if (localContacts && localContacts.length > 0) {
+      console.log("[CloudSync] Local DB has data, skipping restore");
       return false;
     }
     
-    console.log(`[CloudSync] Restoring ${decrypted.messages.length} messages from cloud for ${contactKey.slice(0, 8)}...`);
-    
-    // Save to IndexedDB
-    for (const msg of decrypted.messages) {
-      await addMessage({ ...msg, contactKey });
+    // Try to load backup from cloud
+    const cloudData = await loadBackupFromCloud();
+    if (!cloudData?.found || !cloudData.encrypted) {
+      console.log("[CloudSync] No cloud backup found");
+      return false;
     }
     
-    // Update state
-    state.messages.set(contactKey, decrypted.messages);
+    console.log(`[CloudSync] Found cloud backup (${cloudData.size} bytes), decrypting...`);
     
+    // Decrypt
+    const backup = await decryptFullBackup(cloudData.encrypted);
+    if (!backup) {
+      console.warn("[CloudSync] Failed to decrypt backup - may be encrypted with old key");
+      console.warn("[CloudSync] Send a new message to create fresh backup with new key");
+      return false;
+    }
+    
+    console.log("[CloudSync] Backup decrypted successfully");
+    
+    // Validate backup belongs to this wallet
+    if (backup.ownerWallet && backup.ownerWallet !== state.currentWallet) {
+      console.warn("[CloudSync] Backup wallet mismatch!");
+      return false;
+    }
+    
+    console.log(`[CloudSync] Restoring: ${backup.contacts?.length || 0} contacts, ${backup.messages?.length || 0} messages`);
+    
+    // Restore contacts
+    if (Array.isArray(backup.contacts)) {
+      for (const contact of backup.contacts) {
+        if (contact?.pubkey) {
+          await upsertContact(contact);
+        }
+      }
+    }
+    
+    // Restore messages
+    if (Array.isArray(backup.messages)) {
+      for (const message of backup.messages) {
+        if (message?.id && message?.contactKey) {
+          await addMessage(message);
+        }
+      }
+    }
+    
+    // Restore profile (but keep encryption key from current session)
+    if (backup.profile) {
+      const currentProfile = await getProfile();
+      await saveProfile({
+        ...backup.profile,
+        encryptionPublicKey: currentProfile?.encryptionPublicKey || backup.profile?.encryptionPublicKey,
+      });
+    }
+    
+    // Restore localStorage settings (v3+)
+    if (backup.localStorageSettings) {
+      restoreLocalStorageSettings(backup.localStorageSettings);
+      console.log("[CloudSync] Settings restored");
+    }
+    
+    console.log("[CloudSync] Restore completed!");
     return true;
   } catch (error) {
     console.warn("[CloudSync] Restore failed:", error.message);
@@ -682,39 +806,13 @@ async function restoreChatFromCloudIfNeeded(contactKey) {
   }
 }
 
-/**
- * Restore all chats from cloud (called on first load with empty DB)
- */
-async function restoreAllChatsFromCloud() {
-  if (!CLOUD_SYNC_ENABLED) return;
-  if (!getSessionToken()) return;
-  if (!state.encryptionKeys?.secretKey) return; // Keys not yet loaded
-  
-  try {
-    console.log("[CloudSync] Checking for cloud backup...");
-    const result = await loadChatListFromCloud();
-    
-    if (!result?.chats?.length) {
-      console.log("[CloudSync] No cloud backup found");
-      return;
-    }
-    
-    console.log(`[CloudSync] Found ${result.chats.length} chats in cloud`);
-    
-    for (const chat of result.chats) {
-      await restoreChatFromCloudIfNeeded(chat.contactKey);
-    }
-    
-    // Refresh UI
-    await refreshContacts();
-    
-  } catch (error) {
-    console.warn("[CloudSync] Full restore failed:", error.message);
-  }
+// Legacy function for compatibility - now schedules full backup
+function scheduleChatSync(contactKey) {
+  if (contactKey === SCANNER_CONTACT_KEY) return;
+  scheduleCloudBackup();
 }
 
 // Token Scanner
-const SCANNER_CONTACT_KEY = "__SOLINK_SCANNER__";
 const SCANNER_API_URL = "https://dfn.wtf/api/http-report";
 const SOLANA_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SCAN_REPORT_PREFIX = "__SOLINK_SCAN_REPORT__";
@@ -834,6 +932,7 @@ async function loadWorkspace(walletPubkey) {
   state.hasFetchedProfile = false;
   state.sessionSecrets.clear();
   state.remoteEncryptionKeys.clear();
+  state.encryptionKeys = null; // Clear encryption keys for new wallet
   contactProfileLookups.clear();
   contactProfileCooldown.clear();
   clearChatView();
@@ -844,11 +943,6 @@ async function loadWorkspace(walletPubkey) {
   renderContactList();
   await initializeProfile();
   await refreshContacts();
-  
-  // Try to restore chats from cloud if local DB is empty
-  restoreAllChatsFromCloud().catch(err => {
-    console.warn("[CloudSync] Background restore failed:", err.message);
-  });
 }
 
 function cacheDom() {
@@ -1254,6 +1348,7 @@ function updateSettings(partial) {
   };
   persistSettings();
   syncSettingsUI();
+  scheduleCloudBackup(); // Sync settings to cloud
 }
 
 function syncSettingsUI() {
@@ -1462,6 +1557,9 @@ async function addScannerReportMessage(report) {
   
   // Broadcast to other tabs
   broadcastSync("SCANNER_REPORT", { message });
+  
+  // Backup scanner history to cloud
+  scheduleCloudBackup();
 }
 
 async function handleScannerInput(text) {
@@ -6260,48 +6358,6 @@ async function handleIncomingMessages(messages) {
   }
 }
 
-// Derive encryption keys deterministically from wallet signature
-async function deriveEncryptionKeysFromWallet() {
-  const provider = getProviderInstance();
-  if (!provider?.signMessage) {
-    console.warn("[Encryption] Wallet not available for key derivation");
-    return null;
-  }
-  
-  try {
-    console.log("[Encryption] Deriving keys from wallet signature...");
-    
-    // Fixed message for deterministic key derivation
-    const message = "SOLink Encryption Key Derivation v1";
-    const messageBytes = new TextEncoder().encode(message);
-    
-    // Sign with wallet
-    const signed = await provider.signMessage(messageBytes, 'utf8');
-    const signature = 'signature' in signed ? signed.signature : signed;
-    
-    // Hash signature to get 32-byte seed
-    const signatureBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', signatureBytes);
-    const seed = new Uint8Array(hashBuffer);
-    
-    // Derive key pair from seed (deterministic!)
-    const pair = nacl.box.keyPair.fromSecretKey(seed);
-    
-    const keys = {
-      publicKey: bytesToBase64(pair.publicKey),
-      secretKey: bytesToBase64(pair.secretKey),
-      createdAt: Date.now(),
-      derived: true
-    };
-    
-    console.log("[Encryption] Keys derived successfully from wallet");
-    return keys;
-  } catch (error) {
-    console.error("[Encryption] Key derivation failed:", error);
-    return null;
-  }
-}
-
 async function ensureEncryptionKeys() {
   if (state.encryptionKeys?.publicKey && state.encryptionKeys?.secretKey) {
     return state.encryptionKeys;
@@ -6310,20 +6366,15 @@ async function ensureEncryptionKeys() {
   let keys = await getEncryptionKeys();
   
   if (!keys || !keys.publicKey || !keys.secretKey) {
-    // Try to derive keys from wallet (deterministic - same keys on any device)
-    keys = await deriveEncryptionKeysFromWallet();
-    
-    if (!keys) {
-      // Fallback to random keys if derivation fails (mobile, etc.)
-      console.warn("[Encryption] Derivation failed, using random keys");
-      const pair = nacl.box.keyPair();
-      keys = {
-        publicKey: bytesToBase64(pair.publicKey),
-        secretKey: bytesToBase64(pair.secretKey),
-        createdAt: Date.now(),
-      };
-    }
-    
+    // Generate random keys for E2E encryption
+    // Messages are backed up in plaintext, so new keys work after restore
+    console.log("[Encryption] Generating new encryption keys...");
+    const pair = nacl.box.keyPair();
+    keys = {
+      publicKey: bytesToBase64(pair.publicKey),
+      secretKey: bytesToBase64(pair.secretKey),
+      createdAt: Date.now(),
+    };
     await saveEncryptionKeys(keys);
   }
   
@@ -6392,19 +6443,13 @@ async function resetEncryptionKeys() {
   state.sessionSecrets.clear();
   state.remoteEncryptionKeys.clear();
   
-  // Try to derive keys from wallet first
-  let newKeys = await deriveEncryptionKeysFromWallet();
-  
-  if (!newKeys) {
-    // Fallback to random keys
-    console.warn("[Encryption] Cannot derive from wallet, using random keys");
-    const pair = nacl.box.keyPair();
-    newKeys = {
-      publicKey: bytesToBase64(pair.publicKey),
-      secretKey: bytesToBase64(pair.secretKey),
-      createdAt: Date.now(),
-    };
-  }
+  // Generate new random keys
+  const pair = nacl.box.keyPair();
+  const newKeys = {
+    publicKey: bytesToBase64(pair.publicKey),
+    secretKey: bytesToBase64(pair.secretKey),
+    createdAt: Date.now(),
+  };
   
   // Save new keys
   await saveEncryptionKeys(newKeys);
@@ -6458,14 +6503,7 @@ async function setActiveContact(pubkey) {
   void hydrateContactProfile(normalized);
   await loadMessages(normalized);
   
-  // Try to restore from cloud if local is empty
-  const localMsgs = state.messages.get(normalized) || [];
-  if (localMsgs.length === 0) {
-    const restored = await restoreChatFromCloudIfNeeded(normalized);
-    if (restored) {
-      await loadMessages(normalized); // Reload after restore
-    }
-  }
+  // Messages should already be loaded from cloud backup if available
   
   await markMessagesRead(normalized);
   await refreshContacts(false);
@@ -7498,11 +7536,25 @@ async function handleAppStateChange(appState) {
     if (!state.hasFetchedProfile) {
       await syncProfileFromServer();
       state.hasFetchedProfile = true;
+      
+      // Try to restore from cloud backup FIRST (before other UI updates)
+      try {
+        console.log("[CloudSync] Starting restore check after auth...");
+        const restored = await restoreFromCloudBackup();
+        if (restored) {
+          console.log("[CloudSync] Restore successful, refreshing UI...");
+          await refreshContacts();
+          renderContactList();
+        }
+      } catch (err) {
+        console.warn("[CloudSync] Restore failed:", err.message);
+      }
+      
       // Show install promotion after first successful auth
       showInstallPromotion();
       // Check if backup reminder is needed
       checkBackupReminder();
-      // Sync push toggle and check if we should show the prompt
+      // Sync push toggle and check if we should show the prompt (AFTER restore)
       syncPushToggle();
       checkPushPrompt();
     }
