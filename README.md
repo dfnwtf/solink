@@ -21,10 +21,12 @@
 
 - **🔑 Wallet-Native Identity** — Your Solana wallet is your identity. No signup, no passwords.
 - **🔒 End-to-End Encryption** — Messages encrypted with NaCl (XSalsa20-Poly1305). Server never sees plaintext.
+- **☁️ Cloud Sync** — Automatic encrypted backup to cloud. Clear cache, switch devices — your data stays safe.
 - **💸 Send SOL in Chat** — Transfer SOL directly in conversations.
 - **🔍 Token Scanner** — Instant security reports for any Solana token powered by DFN Patrol.
 - **🔗 Token Link Preview** — Paste any token link and get instant security report card.
-- **📱 PWA Support** — Install as app on desktop.
+- **🔔 Push Notifications** — Get notified when you receive new messages.
+- **📱 PWA Support** — Install as app on desktop and mobile.
 - **💾 Encrypted Backups** — Export your data with AES-256 password protection.
 
 ---
@@ -49,7 +51,7 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 │  Phantom Wallet → Ed25519 signature for auth            │
 │  TweetNaCl      → X25519 key exchange                   │
 │  XSalsa20-Poly1305 → Message encryption                 │
-│  IndexedDB      → Local encrypted storage               │
+│  IndexedDB      → Local cache (messages, contacts)      │
 └─────────────────────────────────────────────────────────┘
                             │
                     (only ciphertext)
@@ -57,8 +59,9 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 ┌─────────────────────────────────────────────────────────┐
 │               Cloudflare Workers                         │
 ├─────────────────────────────────────────────────────────┤
-│  KV Storage     → Profiles, public keys                 │
+│  KV Storage     → Profiles, public keys, sessions       │
 │  Durable Objects → Message queue (encrypted)            │
+│  R2 Storage     → Encrypted cloud backups               │
 │  No plaintext ever touches the server                   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -70,6 +73,7 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 - ✅ **HSTS** enforces HTTPS
 - ✅ **No inline scripts** — all JS in external files
 - ✅ **Encrypted backups** with AES-256-GCM
+- ✅ **Cloud backups** encrypted with wallet-derived key
 - ✅ **Rate limiting** — 60 messages/minute
 - ✅ **Nonce-based auth** — replay attack protection
 
@@ -80,7 +84,7 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 | Layer | Technologies |
 |-------|--------------|
 | **Frontend** | Vanilla JS, TweetNaCl, IndexedDB, CSS3 |
-| **Backend** | Cloudflare Workers, KV, Durable Objects |
+| **Backend** | Cloudflare Workers, KV, Durable Objects, R2 |
 | **Encryption** | NaCl (X25519 + XSalsa20-Poly1305) |
 | **Blockchain** | Solana Web3.js, Phantom Wallet |
 
@@ -161,7 +165,8 @@ const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
 - [x] Global @nicknames
 - [x] Send SOL in chat
 - [x] Security hardening (A+ rating)
-- [x] Encrypted backups
+- [x] Encrypted backups (local export)
+- [x] Cloud sync (R2 encrypted backup)
 - [x] SEO & sitemap
 - [x] Token Scanner (DFN Patrol integration)
 - [x] Message reactions
@@ -169,8 +174,8 @@ const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
 - [x] Mobile swipe gestures (reply/delete)
 - [ ] Multi-wallet support (Solflare, Backpack)
 - [ ] Group chats
-- [ ] Voice calls
-- [ ] File sharing
+- [ ] Voice messages
+- [ ] Image sharing
 
 ---
 
