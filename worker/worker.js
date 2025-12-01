@@ -409,6 +409,10 @@ export default {
         return handleImageProxy(request, url, env);
       case '/api/link-preview':
         return handleLinkPreview(request, url, env);
+      case '/api/push/subscribe':
+        return handlePushSubscribe(request, env);
+      case '/api/push/unsubscribe':
+        return handlePushUnsubscribe(request, env);
       default:
         return new Response('Not Found', { status: 404 });
     }
@@ -563,11 +567,36 @@ async function handleSendMessage(request, env) {
 
   try {
     await inboxStore(env, recipientPubkey, message);
+    
+    // Send push notification to recipient
+    console.log(`[Push] Attempting to send push to ${recipientPubkey}`);
+    try {
+      await sendPushNotification(env, recipientPubkey, {
+        title: senderDisplayName || senderNickname || shortenPubkey(senderPubkey),
+        body: 'New message',
+        icon: '/icons/icon-192.png',
+        badge: '/icons/badge-72.png',
+        tag: `solink-${senderPubkey}`,
+        data: {
+          sender: senderPubkey,
+          url: `/app?chat=${senderPubkey}`
+        }
+      });
+      console.log(`[Push] Push notification completed`);
+    } catch (pushErr) {
+      console.error('[Push] Notification error:', pushErr.message || pushErr);
+    }
+    
   } catch (error) {
     console.error('Inbox store error', error);
     return errorResponse(request, error.message || 'Failed to enqueue message', 500);
   }
   return jsonResponse(request, { ok: true, messageId: message.id });
+}
+
+function shortenPubkey(pubkey) {
+  if (!pubkey || pubkey.length < 10) return pubkey || '';
+  return pubkey.slice(0, 4) + '...' + pubkey.slice(-4);
 }
 
 async function handleInboxPoll(request, env) {
@@ -1410,6 +1439,403 @@ async function handleImageProxy(request, url, env) {
     console.error('Image proxy error:', error);
     return errorResponse(request, 'Failed to fetch image', 500);
   }
+}
+
+// =====================
+// Push Notifications
+// =====================
+
+const PUSH_SUBSCRIPTION_PREFIX = 'push_sub:';
+const VAPID_PRIVATE_KEY = 'jRK-AHoshKkmhKKhIzupOCqhrkqjHH-UiM-QJJcPC9w';
+const VAPID_PUBLIC_KEY = 'BJoy9eenwraBkfPbPYcMTRV_Rw6z2uYfIPrGgkukwJI06A8zD_tPBec6-eB8dzi13BFxayeS7wZLPgvSvVb7WMY';
+const VAPID_SUBJECT = 'mailto:support@solink.chat';
+
+async function handlePushSubscribe(request, env) {
+  console.log('[Push] handlePushSubscribe called');
+  
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const body = await readJson(request);
+  console.log('[Push] Received body:', JSON.stringify(body).slice(0, 200));
+  
+  if (!body || !body.pubkey || !body.subscription) {
+    console.log('[Push] Missing pubkey or subscription');
+    return errorResponse(request, 'Missing pubkey or subscription');
+  }
+
+  const { pubkey, subscription } = body;
+  console.log(`[Push] Processing subscription for pubkey: ${pubkey}`);
+
+  // Validate pubkey format
+  if (!BASE58_REGEX.test(pubkey)) {
+    console.log('[Push] Invalid pubkey format');
+    return errorResponse(request, 'Invalid pubkey format');
+  }
+
+  try {
+    // Store subscription in KV
+    // We store as an array to support multiple devices per user
+    const key = `${PUSH_SUBSCRIPTION_PREFIX}${pubkey}`;
+    console.log(`[Push] KV key: ${key}`);
+    
+    const existing = await env.SOLINK_KV.get(key, 'json') || [];
+    console.log(`[Push] Existing subscriptions: ${existing.length}`);
+    
+    // Check if this endpoint already exists
+    const endpointExists = existing.some(sub => sub.endpoint === subscription.endpoint);
+    console.log(`[Push] Endpoint exists: ${endpointExists}`);
+    
+    if (!endpointExists) {
+      existing.push(subscription);
+      // Limit to 5 subscriptions per user (5 devices)
+      while (existing.length > 5) {
+        existing.shift();
+      }
+    }
+    
+    console.log(`[Push] Saving ${existing.length} subscriptions to KV...`);
+    await env.SOLINK_KV.put(key, JSON.stringify(existing), {
+      expirationTtl: 60 * 60 * 24 * 30 // 30 days
+    });
+
+    console.log(`[Push] Subscription saved for ${pubkey}, total: ${existing.length}`);
+    return jsonResponse(request, { success: true });
+  } catch (error) {
+    console.error('[Push] Subscribe error:', error.message || error);
+    return errorResponse(request, 'Failed to save subscription', 500);
+  }
+}
+
+async function handlePushUnsubscribe(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const body = await readJson(request);
+  if (!body || !body.pubkey) {
+    return errorResponse(request, 'Missing pubkey');
+  }
+
+  const { pubkey, endpoint } = body;
+
+  try {
+    const key = `${PUSH_SUBSCRIPTION_PREFIX}${pubkey}`;
+    
+    if (endpoint) {
+      // Remove specific endpoint
+      const existing = await env.SOLINK_KV.get(key, 'json') || [];
+      const filtered = existing.filter(sub => sub.endpoint !== endpoint);
+      if (filtered.length > 0) {
+        await env.SOLINK_KV.put(key, JSON.stringify(filtered));
+      } else {
+        await env.SOLINK_KV.delete(key);
+      }
+    } else {
+      // Remove all subscriptions for this user
+      await env.SOLINK_KV.delete(key);
+    }
+
+    console.log(`[Push] Subscription removed for ${pubkey}`);
+    return jsonResponse(request, { success: true });
+  } catch (error) {
+    console.error('[Push] Unsubscribe error:', error);
+    return errorResponse(request, 'Failed to remove subscription', 500);
+  }
+}
+
+// Send push notification to a user
+async function sendPushNotification(env, recipientPubkey, payload) {
+  try {
+    const key = `${PUSH_SUBSCRIPTION_PREFIX}${recipientPubkey}`;
+    const subscriptions = await env.SOLINK_KV.get(key, 'json');
+    
+    console.log(`[Push] Checking subscriptions for ${recipientPubkey}, found: ${subscriptions?.length || 0}`);
+    
+    if (!subscriptions || subscriptions.length === 0) {
+      console.log(`[Push] No subscriptions for ${recipientPubkey}`);
+      return;
+    }
+
+    const payloadString = JSON.stringify(payload);
+    const expiredEndpoints = [];
+
+    for (const subscription of subscriptions) {
+      try {
+        console.log(`[Push] Sending to endpoint: ${subscription.endpoint?.slice(0, 50)}...`);
+        const response = await sendWebPush(subscription, payloadString);
+        console.log(`[Push] Response status: ${response.status}`);
+        
+        if (response.status === 410 || response.status === 404) {
+          // Subscription expired or invalid
+          expiredEndpoints.push(subscription.endpoint);
+          console.log(`[Push] Subscription expired/invalid`);
+        } else if (response.status === 201) {
+          console.log(`[Push] Successfully sent!`);
+        } else {
+          const text = await response.text();
+          console.log(`[Push] Unexpected response: ${response.status} - ${text}`);
+        }
+      } catch (error) {
+        console.error('[Push] Send error:', error.message || error);
+        if (error.message?.includes('expired') || error.message?.includes('invalid')) {
+          expiredEndpoints.push(subscription.endpoint);
+        }
+      }
+    }
+
+    // Clean up expired subscriptions
+    if (expiredEndpoints.length > 0) {
+      const filtered = subscriptions.filter(sub => !expiredEndpoints.includes(sub.endpoint));
+      if (filtered.length > 0) {
+        await env.SOLINK_KV.put(key, JSON.stringify(filtered));
+      } else {
+        await env.SOLINK_KV.delete(key);
+      }
+    }
+  } catch (error) {
+    console.error('[Push] sendPushNotification error:', error.message || error);
+  }
+}
+
+// Web Push implementation using VAPID
+async function sendWebPush(subscription, payload) {
+  const endpoint = subscription.endpoint;
+  const p256dh = subscription.keys.p256dh;
+  const auth = subscription.keys.auth;
+
+  try {
+    // Create VAPID JWT
+    const jwt = await createVapidJwt(endpoint);
+    console.log(`[Push] VAPID JWT created`);
+    
+    // Encrypt payload using RFC 8291 (aes128gcm)
+    const encryptedPayload = await encryptPushPayload(payload, p256dh, auth);
+    console.log(`[Push] Payload encrypted, size: ${encryptedPayload.byteLength}`);
+    
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Encoding': 'aes128gcm',
+        'TTL': '86400',
+        'Authorization': `vapid t=${jwt}, k=${VAPID_PUBLIC_KEY}`,
+      },
+      body: encryptedPayload,
+    });
+
+    return response;
+  } catch (error) {
+    console.error('[Push] sendWebPush error:', error.message || error);
+    throw error;
+  }
+}
+
+// Create VAPID JWT for push authorization
+async function createVapidJwt(endpoint) {
+  const url = new URL(endpoint);
+  const audience = `${url.protocol}//${url.host}`;
+  const expiration = Math.floor(Date.now() / 1000) + 12 * 60 * 60; // 12 hours
+
+  const header = { typ: 'JWT', alg: 'ES256' };
+  const payload = {
+    aud: audience,
+    exp: expiration,
+    sub: VAPID_SUBJECT,
+  };
+
+  const headerB64 = base64UrlEncode(JSON.stringify(header));
+  const payloadB64 = base64UrlEncode(JSON.stringify(payload));
+  const unsignedToken = `${headerB64}.${payloadB64}`;
+
+  // Import VAPID private key as JWK
+  // VAPID private key is 32-byte raw scalar, need to convert to JWK
+  const privateKeyBytes = base64UrlDecode(VAPID_PRIVATE_KEY);
+  const publicKeyBytes = base64UrlDecode(VAPID_PUBLIC_KEY);
+  
+  // JWK format for P-256 private key
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    // Public key X and Y coordinates (from 65-byte uncompressed key: 0x04 || X || Y)
+    x: base64UrlEncode(publicKeyBytes.slice(1, 33)),
+    y: base64UrlEncode(publicKeyBytes.slice(33, 65)),
+    // Private key D value (32 bytes)
+    d: base64UrlEncode(privateKeyBytes),
+  };
+
+  const privateKey = await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign']
+  );
+
+  // Sign the token
+  const signature = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    privateKey,
+    new TextEncoder().encode(unsignedToken)
+  );
+
+  // Convert signature from DER to raw format (r || s, each 32 bytes)
+  const signatureBytes = new Uint8Array(signature);
+  const signatureB64 = base64UrlEncode(signatureBytes);
+  return `${unsignedToken}.${signatureB64}`;
+}
+
+// Encrypt push payload using RFC 8291 (aes128gcm)
+async function encryptPushPayload(payload, p256dhKey, authSecret) {
+  // Decode subscriber keys
+  const subscriberPublicKeyBytes = base64UrlDecode(p256dhKey);
+  const authSecretBytes = base64UrlDecode(authSecret);
+  
+  // Generate ephemeral key pair for ECDH
+  const localKeyPair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
+  );
+
+  // Import subscriber's public key
+  const subscriberKey = await crypto.subtle.importKey(
+    'raw',
+    subscriberPublicKeyBytes,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    []
+  );
+
+  // Derive shared secret via ECDH
+  const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: subscriberKey },
+    localKeyPair.privateKey,
+    256
+  ));
+
+  // Export local public key
+  const localPublicKeyBytes = new Uint8Array(await crypto.subtle.exportKey('raw', localKeyPair.publicKey));
+
+  // Generate random salt
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  // RFC 8291 key derivation
+  // IKM = ECDH(localPrivate, subscriberPublic)
+  // PRK = HKDF-Extract(auth_secret, IKM)
+  // Then derive CEK and nonce
+  
+  // Step 1: Create info for key derivation
+  const keyInfoBuf = createInfo('aesgcm', subscriberPublicKeyBytes, localPublicKeyBytes);
+  const nonceInfoBuf = createInfo('nonce', subscriberPublicKeyBytes, localPublicKeyBytes);
+  
+  // Step 2: Derive PRK from shared secret and auth
+  const prkKey = await crypto.subtle.importKey('raw', sharedSecret, { name: 'HKDF' }, false, ['deriveBits', 'deriveKey']);
+  
+  // Intermediate key material
+  const ikmInfo = concatUint8Arrays(
+    new TextEncoder().encode('WebPush: info\0'),
+    subscriberPublicKeyBytes,
+    localPublicKeyBytes
+  );
+  
+  const ikm = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', salt: authSecretBytes, info: ikmInfo, hash: 'SHA-256' },
+    prkKey,
+    256
+  ));
+  
+  // Import IKM for final key derivation
+  const ikmKey = await crypto.subtle.importKey('raw', ikm, { name: 'HKDF' }, false, ['deriveBits', 'deriveKey']);
+  
+  // Derive content encryption key (CEK) - 16 bytes
+  const cekInfo = new TextEncoder().encode('Content-Encoding: aes128gcm\0');
+  const cek = await crypto.subtle.deriveKey(
+    { name: 'HKDF', salt: salt, info: cekInfo, hash: 'SHA-256' },
+    ikmKey,
+    { name: 'AES-GCM', length: 128 },
+    false,
+    ['encrypt']
+  );
+  
+  // Derive nonce - 12 bytes
+  const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce\0');
+  const nonceBits = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', salt: salt, info: nonceInfo, hash: 'SHA-256' },
+    ikmKey,
+    96
+  ));
+
+  // Prepare plaintext with padding (RFC 8291 requires delimiter byte)
+  const payloadBytes = new TextEncoder().encode(payload);
+  const paddedPayload = new Uint8Array(payloadBytes.length + 1);
+  paddedPayload.set(payloadBytes);
+  paddedPayload[payloadBytes.length] = 2; // Delimiter
+
+  // Encrypt with AES-128-GCM
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonceBits, tagLength: 128 },
+    cek,
+    paddedPayload
+  ));
+
+  // Build aes128gcm header: salt (16) + rs (4) + idlen (1) + keyid (65)
+  const recordSize = 4096;
+  const header = new Uint8Array(86); // 16 + 4 + 1 + 65
+  header.set(salt, 0);
+  new DataView(header.buffer).setUint32(16, recordSize, false);
+  header[20] = 65; // Length of uncompressed P-256 public key
+  header.set(localPublicKeyBytes, 21);
+
+  // Combine header and ciphertext
+  const result = new Uint8Array(header.length + encrypted.length);
+  result.set(header);
+  result.set(encrypted, header.length);
+
+  return result;
+}
+
+function createInfo(type, subscriberKey, localKey) {
+  const typeBytes = new TextEncoder().encode(type);
+  return concatUint8Arrays(
+    new TextEncoder().encode('Content-Encoding: '),
+    typeBytes,
+    new Uint8Array([0]),
+    new TextEncoder().encode('P-256'),
+    new Uint8Array([0, 65]),
+    subscriberKey,
+    new Uint8Array([0, 65]),
+    localKey
+  );
+}
+
+function concatUint8Arrays(...arrays) {
+  const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    result.set(arr, offset);
+    offset += arr.length;
+  }
+  return result;
+}
+
+function base64UrlEncode(data) {
+  let str;
+  if (typeof data === 'string') {
+    str = btoa(data);
+  } else {
+    str = btoa(String.fromCharCode(...data));
+  }
+  return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = '='.repeat((4 - str.length % 4) % 4);
+  const decoded = atob(str + padding);
+  return Uint8Array.from(decoded, c => c.charCodeAt(0));
 }
 
 export { InboxDurable };
