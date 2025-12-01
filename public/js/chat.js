@@ -316,6 +316,170 @@ const VAPID_PUBLIC_KEY = "BJoy9eenwraBkfPbPYcMTRV_Rw6z2uYfIPrGgkukwJI06A8zD_tPBe
 const PUSH_ASKED_KEY = "solink_push_asked";
 const PUSH_SUBSCRIPTION_KEY = "solink_push_subscription";
 
+// Cross-tab synchronization
+const SYNC_CHANNEL_NAME = "solink-sync";
+let syncChannel = null;
+
+function initSyncChannel() {
+  if (!hasWindow || !("BroadcastChannel" in window)) {
+    console.log("[Sync] BroadcastChannel not supported");
+    return;
+  }
+  
+  try {
+    syncChannel = new BroadcastChannel(SYNC_CHANNEL_NAME);
+    syncChannel.onmessage = handleSyncMessage;
+    console.log("[Sync] Channel initialized");
+  } catch (error) {
+    console.warn("[Sync] Failed to create channel:", error);
+  }
+}
+
+function broadcastSync(type, data) {
+  if (!syncChannel) return;
+  try {
+    syncChannel.postMessage({ type, data, timestamp: Date.now() });
+  } catch (error) {
+    console.warn("[Sync] Broadcast failed:", error);
+  }
+}
+
+function handleSyncMessage(event) {
+  const { type, data } = event.data || {};
+  console.log("[Sync] Received:", type);
+  
+  switch (type) {
+    case "MESSAGE_SENT":
+      handleSyncMessageSent(data);
+      break;
+    case "MESSAGE_RECEIVED":
+      handleSyncMessageReceived(data);
+      break;
+    case "MESSAGE_STATUS":
+      handleSyncMessageStatus(data);
+      break;
+    case "REACTION":
+      handleSyncReaction(data);
+      break;
+    case "CONTACT_UPDATE":
+      handleSyncContactUpdate(data);
+      break;
+    case "SCANNER_REPORT":
+      handleSyncScannerReport(data);
+      break;
+  }
+}
+
+function handleSyncMessageSent(data) {
+  if (!data?.contactKey || !data?.message) return;
+  
+  // Check if message already exists
+  const messages = state.messages.get(data.contactKey) || [];
+  const exists = messages.some(m => m.id === data.message.id);
+  if (exists) return;
+  
+  // Add message to state
+  appendMessageToState(data.contactKey, data.message);
+  
+  // Update contact preview
+  updateContactPreviewFromMessage(data.contactKey, data.message);
+  
+  // Re-render if this chat is active
+  if (state.activeContactKey === data.contactKey) {
+    renderMessages(data.contactKey);
+  }
+}
+
+function handleSyncMessageReceived(data) {
+  if (!data?.contactKey || !data?.message) return;
+  
+  // Check if message already exists
+  const messages = state.messages.get(data.contactKey) || [];
+  const exists = messages.some(m => m.id === data.message.id);
+  if (exists) return;
+  
+  // Add message to state
+  appendMessageToState(data.contactKey, data.message);
+  
+  // Update contact preview
+  updateContactPreviewFromMessage(data.contactKey, data.message);
+  
+  // Re-render if this chat is active
+  if (state.activeContactKey === data.contactKey) {
+    renderMessages(data.contactKey);
+  }
+}
+
+function handleSyncMessageStatus(data) {
+  if (!data?.messageId || !data?.status) return;
+  
+  // Find and update message status
+  for (const [contactKey, messages] of state.messages) {
+    const message = messages.find(m => m.id === data.messageId);
+    if (message) {
+      message.status = data.status;
+      if (state.activeContactKey === contactKey) {
+        renderMessages(contactKey);
+      }
+      break;
+    }
+  }
+}
+
+function handleSyncReaction(data) {
+  if (!data?.messageId || !data?.emoji || !data?.action) return;
+  
+  // Find message and update reaction
+  for (const [contactKey, messages] of state.messages) {
+    const message = messages.find(m => m.id === data.messageId);
+    if (message) {
+      const reactions = message.meta?.reactions || {};
+      
+      if (data.action === "add") {
+        if (!reactions[data.emoji]) reactions[data.emoji] = [];
+        if (!reactions[data.emoji].includes(data.user)) {
+          reactions[data.emoji].push(data.user);
+        }
+      } else if (data.action === "remove") {
+        if (reactions[data.emoji]) {
+          reactions[data.emoji] = reactions[data.emoji].filter(u => u !== data.user);
+          if (reactions[data.emoji].length === 0) {
+            delete reactions[data.emoji];
+          }
+        }
+      }
+      
+      message.meta = { ...(message.meta || {}), reactions };
+      
+      if (state.activeContactKey === contactKey) {
+        renderMessages(contactKey);
+      }
+      break;
+    }
+  }
+}
+
+function handleSyncContactUpdate(data) {
+  if (!data?.contactKey) return;
+  
+  // Refresh contacts list
+  refreshContacts(false);
+}
+
+function handleSyncScannerReport(data) {
+  if (!data?.message) return;
+  
+  // Add scanner report to scanner messages
+  if (state.activeContactKey === SCANNER_CONTACT_KEY) {
+    const messages = state.messages.get(SCANNER_CONTACT_KEY) || [];
+    const exists = messages.some(m => m.id === data.message.id);
+    if (!exists) {
+      appendMessageToState(SCANNER_CONTACT_KEY, data.message);
+      renderScannerMessages();
+    }
+  }
+}
+
 // Token Scanner
 const SCANNER_CONTACT_KEY = "__SOLINK_SCANNER__";
 const SCANNER_API_URL = "https://dfn.wtf/api/http-report";
@@ -1057,6 +1221,9 @@ async function addScannerReportMessage(report) {
   state.messages.set(SCANNER_CONTACT_KEY, messages);
   await addMessage(message);
   renderScannerMessages();
+  
+  // Broadcast to other tabs
+  broadcastSync("SCANNER_REPORT", { message });
 }
 
 async function handleScannerInput(text) {
@@ -4632,6 +4799,15 @@ async function addReactionToMessage(messageId, emoji, contactKey) {
   // Save to IndexedDB
   await updateMessageMeta(messageId, { reactions });
   
+  // Broadcast to other tabs
+  const myPubkeyForBroadcast = latestAppState?.walletPubkey || getWalletPubkey();
+  broadcastSync("REACTION", {
+    messageId,
+    emoji,
+    user: myPubkeyForBroadcast,
+    action: reactions[emoji]?.includes(myPubkeyForBroadcast) ? "add" : "remove",
+  });
+  
   return true;
 }
 
@@ -5543,6 +5719,13 @@ async function sendPreparedMessage({
       text: trimmedDisplay,
     });
     triggerImmediatePoll();
+    
+    // Broadcast to other tabs
+    broadcastSync("MESSAGE_SENT", {
+      contactKey: normalized,
+      message: { ...message, status: "sent", text: trimmedDisplay },
+    });
+    
     return true;
   } catch (error) {
     console.error("Send failed", error);
@@ -5804,6 +5987,12 @@ async function handleIncomingMessages(messages) {
 
     await addMessage(message);
     appendMessageToState(from, message);
+    
+    // Broadcast to other tabs
+    broadcastSync("MESSAGE_RECEIVED", {
+      contactKey: from,
+      message,
+    });
 
     if (state.activeContactKey === from) {
       renderMessages(from);
@@ -7110,6 +7299,9 @@ async function initialize() {
 
   // Register Service Worker for push notifications
   registerServiceWorker();
+  
+  // Initialize cross-tab sync
+  initSyncChannel();
 
   await ensureEncryptionKeys();
   await loadWorkspace(null);
