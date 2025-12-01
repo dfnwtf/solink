@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    
+    <title>Help Center — SOLink</title>
+    <meta name="description" content="SOLink Help Center - FAQ, guides, and support for the secure Web3 messenger on Solana" />
+    <meta name="robots" content="index, follow" />
+    
+    <link rel="canonical" href="https://solink.chat/help/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    
+    <meta name="theme-color" content="#0a090e" />
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
+    
+    <style>
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --font-display: "Space Grotesk", system-ui, sans-serif;
+        --font-body: "Inter", system-ui, sans-serif;
+        --accent: #d4782a;
+        --accent-muted: #e8a05c;
+        --accent-green: #22c55e;
+        --bg-dark: #0a090e;
+        --bg-card: rgba(255, 255, 255, 0.03);
+        --border-subtle: rgba(255, 255, 255, 0.08);
+        --text-primary: #f5f4f8;
+        --text-secondary: rgba(245, 244, 248, 0.7);
+        --text-muted: rgba(245, 244, 248, 0.5);
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: var(--font-body);
+        background: var(--bg-dark);
+        color: var(--text-primary);
+        min-height: 100vh;
+        line-height: 1.6;
+      }
+
+      .help-page {
+        position: relative;
+        min-height: 100vh;
+        padding: 2rem 1.5rem 4rem;
+        background:
+          radial-gradient(ellipse 80% 50% at 50% -20%, rgba(212, 120, 42, 0.08), transparent),
+          radial-gradient(ellipse 60% 40% at 100% 0%, rgba(212, 120, 42, 0.05), transparent),
+          var(--bg-dark);
+      }
+
+      .help-page::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' seed='5'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .help-container {
+        position: relative;
+        z-index: 1;
+        max-width: 760px;
+        margin: 0 auto;
+      }
+
+      /* Header */
+      .help-header {
+        text-align: center;
+        margin-bottom: 3rem;
+      }
+
+      .help-logo {
+        display: inline-block;
+        font-family: var(--font-display);
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-decoration: none;
+        letter-spacing: 0.15em;
+        opacity: 0.9;
+        transition: color 0.3s, opacity 0.3s;
+      }
+
+      .help-logo:hover {
+        color: var(--accent);
+        opacity: 1;
+      }
+
+      .help-title {
+        font-family: var(--font-display);
+        font-size: clamp(2rem, 5vw, 2.75rem);
+        font-weight: 700;
+        color: var(--text-primary);
+        margin: 1.5rem 0 0.75rem;
+        letter-spacing: -0.02em;
+      }
+
+      .help-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+        max-width: 500px;
+        margin: 0 auto;
+      }
+
+      /* Quick links */
+      .quick-links {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 3rem;
+      }
+
+      .quick-link {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem 1.25rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 10px;
+        text-decoration: none;
+        color: var(--text-primary);
+        transition: border-color 0.2s, background 0.2s;
+      }
+
+      .quick-link:hover {
+        border-color: var(--accent);
+        background: rgba(212, 120, 42, 0.05);
+      }
+
+      .quick-link__icon {
+        font-size: 1.5rem;
+        flex-shrink: 0;
+      }
+
+      .quick-link__text {
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
+
+      /* FAQ Section */
+      .faq-section {
+        margin-bottom: 3rem;
+      }
+
+      .faq-section__title {
+        font-family: var(--font-display);
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 1.25rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .faq-item {
+        margin-bottom: 1rem;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .faq-item summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.25rem;
+        cursor: pointer;
+        font-weight: 500;
+        color: var(--text-primary);
+        background: var(--bg-card);
+        transition: background 0.2s;
+        list-style: none;
+      }
+
+      .faq-item summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .faq-item summary::after {
+        content: "+";
+        font-size: 1.25rem;
+        color: var(--accent);
+        transition: transform 0.2s;
+      }
+
+      .faq-item[open] summary::after {
+        content: "−";
+      }
+
+      .faq-item summary:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .faq-item__answer {
+        padding: 1rem 1.25rem;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        line-height: 1.7;
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      .faq-item__answer a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      .faq-item__answer a:hover {
+        text-decoration: underline;
+      }
+
+      .faq-item__answer ul {
+        margin: 0.75rem 0;
+        padding-left: 1.25rem;
+      }
+
+      .faq-item__answer li {
+        margin-bottom: 0.35rem;
+      }
+
+      .faq-item__answer code {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.85em;
+      }
+
+      /* Contact Section */
+      .contact-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 2rem;
+        text-align: center;
+        margin-bottom: 3rem;
+      }
+
+      .contact-section__title {
+        font-family: var(--font-display);
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 0.5rem;
+      }
+
+      .contact-section__text {
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .contact-section__links {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .contact-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 0.9rem;
+        transition: all 0.2s;
+      }
+
+      .contact-btn--primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .contact-btn--primary:hover {
+        background: var(--accent-muted);
+      }
+
+      .contact-btn--secondary {
+        background: transparent;
+        border: 1px solid var(--border-subtle);
+        color: var(--text-primary);
+      }
+
+      .contact-btn--secondary:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      /* Footer */
+      .help-footer {
+        padding-top: 2rem;
+        border-top: 1px solid var(--border-subtle);
+        text-align: center;
+      }
+
+      .help-footer__links {
+        display: flex;
+        justify-content: center;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.25rem;
+      }
+
+      .help-footer__links a {
+        color: var(--text-muted);
+        text-decoration: none;
+        font-size: 0.85rem;
+        transition: color 0.2s;
+      }
+
+      .help-footer__links a:hover {
+        color: var(--accent);
+      }
+
+      .help-footer__copy {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        opacity: 0.7;
+      }
+
+      @media (max-width: 640px) {
+        .help-page {
+          padding: 1.5rem 1rem 3rem;
+        }
+        .quick-links {
+          grid-template-columns: 1fr;
+        }
+        .contact-section {
+          padding: 1.5rem;
+        }
+        .contact-section__links {
+          flex-direction: column;
+        }
+        .contact-btn {
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="help-page">
+      <div class="help-container">
+        <header class="help-header">
+          <a href="/" class="help-logo">SOLINK</a>
+          <h1 class="help-title">Help Center</h1>
+          <p class="help-subtitle">Find answers to common questions about SOLink messenger</p>
+        </header>
+
+        <!-- Quick Links -->
+        <div class="quick-links">
+          <a href="#getting-started" class="quick-link">
+            <span class="quick-link__icon">🚀</span>
+            <span class="quick-link__text">Getting Started</span>
+          </a>
+          <a href="#security" class="quick-link">
+            <span class="quick-link__icon">🔒</span>
+            <span class="quick-link__text">Security & Privacy</span>
+          </a>
+          <a href="#scanner" class="quick-link">
+            <span class="quick-link__icon">🔍</span>
+            <span class="quick-link__text">Token Scanner</span>
+          </a>
+          <a href="#troubleshooting" class="quick-link">
+            <span class="quick-link__icon">🔧</span>
+            <span class="quick-link__text">Troubleshooting</span>
+          </a>
+        </div>
+
+        <!-- Getting Started -->
+        <section class="faq-section" id="getting-started">
+          <h2 class="faq-section__title">🚀 Getting Started</h2>
+
+          <details class="faq-item">
+            <summary>How do I start using SOLink?</summary>
+            <div class="faq-item__answer">
+              <p>Getting started is simple:</p>
+              <ul>
+                <li>Go to <a href="/app">solink.chat/app</a></li>
+                <li>Click "Connect Wallet"</li>
+                <li>Choose your wallet (Phantom, Solflare, etc.)</li>
+                <li>Approve the connection — you're in!</li>
+              </ul>
+              <p>No registration, no email, no phone number required.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Which wallets are supported?</summary>
+            <div class="faq-item__answer">
+              <p>SOLink supports all major Solana wallets:</p>
+              <ul>
+                <li><strong>Phantom</strong> — Most popular, recommended</li>
+                <li><strong>Solflare</strong> — Web, mobile, and extension</li>
+                <li><strong>Backpack</strong> — Multi-chain wallet</li>
+                <li><strong>Trust Wallet</strong> — Mobile wallet</li>
+                <li>And any wallet that supports Wallet Standard</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>How do I message someone?</summary>
+            <div class="faq-item__answer">
+              <p>To start a conversation:</p>
+              <ul>
+                <li>Click the <strong>"New Chat"</strong> button (✏️)</li>
+                <li>Enter their <strong>wallet address</strong> or <strong>@nickname</strong></li>
+                <li>Start typing and hit Send!</li>
+              </ul>
+              <p>You can message any Solana wallet — they don't need to have SOLink yet. When they connect, they'll see your messages.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>What is a nickname (@username)?</summary>
+            <div class="faq-item__answer">
+              <p>A nickname is a human-readable name for your wallet address. Instead of sharing <code>7xKXtg2CW87d97...</code>, you can share <code>@alice</code>.</p>
+              <p>To set your nickname: <strong>Settings → Profile → Register Nickname</strong></p>
+              <p>Nicknames are unique and first-come-first-served.</p>
+            </div>
+          </details>
+        </section>
+
+        <!-- Security & Privacy -->
+        <section class="faq-section" id="security">
+          <h2 class="faq-section__title">🔒 Security & Privacy</h2>
+
+          <details class="faq-item">
+            <summary>Is SOLink secure?</summary>
+            <div class="faq-item__answer">
+              <p><strong>Yes.</strong> SOLink uses end-to-end encryption (E2E) with NaCl cryptography (XSalsa20-Poly1305). This means:</p>
+              <ul>
+                <li>Messages are encrypted on your device before sending</li>
+                <li>Only you and the recipient can read messages</li>
+                <li>We cannot see your messages — even if we wanted to</li>
+                <li>No backdoors, no exceptions</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Do you store my private keys?</summary>
+            <div class="faq-item__answer">
+              <p><strong>No, never.</strong> Your private keys stay in your wallet (Phantom, Solflare, etc.) and never leave your device. We only see your public wallet address.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Where are my messages stored?</summary>
+            <div class="faq-item__answer">
+              <ul>
+                <li><strong>Locally:</strong> Your message history is stored in your browser (IndexedDB)</li>
+                <li><strong>Temporarily on server:</strong> Encrypted messages wait on our server until delivered, then are deleted</li>
+              </ul>
+              <p>We only store encrypted ciphertext — we can't read your messages.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>How do I backup my messages?</summary>
+            <div class="faq-item__answer">
+              <p>Go to <strong>Settings → Backup & Restore</strong>:</p>
+              <ul>
+                <li><strong>Create Backup:</strong> Exports your messages as an encrypted file (AES-256)</li>
+                <li><strong>Restore Backup:</strong> Import your messages on a new device</li>
+              </ul>
+              <p>Set a strong password — without it, the backup cannot be restored.</p>
+            </div>
+          </details>
+        </section>
+
+        <!-- Token Scanner -->
+        <section class="faq-section" id="scanner">
+          <h2 class="faq-section__title">🔍 Token Scanner</h2>
+
+          <details class="faq-item">
+            <summary>What is the Token Scanner?</summary>
+            <div class="faq-item__answer">
+              <p>The Token Scanner analyzes Solana tokens and provides security risk assessments powered by DFN Patrol. It checks:</p>
+              <ul>
+                <li>Contract security (mint authority, freeze authority)</li>
+                <li>Liquidity status and top holders</li>
+                <li>Social presence and community</li>
+                <li>DEX payment status</li>
+                <li>Potential rug pull indicators</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>How do I scan a token?</summary>
+            <div class="faq-item__answer">
+              <p>Two ways:</p>
+              <ul>
+                <li><strong>Scan tab:</strong> Click the 🔍 icon, paste a token address or link</li>
+                <li><strong>In chat:</strong> Paste any token link (pump.fun, dexscreener, etc.) — it auto-generates a preview card</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Should I trust the risk score?</summary>
+            <div class="faq-item__answer">
+              <p><strong>Use it as one data point, not the only source.</strong></p>
+              <p>The scanner provides algorithmic analysis based on available data. It may not detect all risks. Always:</p>
+              <ul>
+                <li>Do your own research (DYOR)</li>
+                <li>Check multiple sources</li>
+                <li>Never invest more than you can afford to lose</li>
+              </ul>
+              <p>Read our <a href="/disclaimer">full Disclaimer</a> for more information.</p>
+            </div>
+          </details>
+        </section>
+
+        <!-- Troubleshooting -->
+        <section class="faq-section" id="troubleshooting">
+          <h2 class="faq-section__title">🔧 Troubleshooting</h2>
+
+          <details class="faq-item">
+            <summary>Wallet won't connect</summary>
+            <div class="faq-item__answer">
+              <p>Try these steps:</p>
+              <ul>
+                <li>Make sure your wallet extension is installed and unlocked</li>
+                <li>Refresh the page and try again</li>
+                <li>Check if you have multiple wallet extensions — disable conflicting ones</li>
+                <li>Try a different browser (Chrome works best)</li>
+                <li>Clear browser cache and cookies for solink.chat</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Messages not sending</summary>
+            <div class="faq-item__answer">
+              <p>If messages show "Sending..." but never deliver:</p>
+              <ul>
+                <li>Check your internet connection</li>
+                <li>Refresh the page</li>
+                <li>Make sure you're still connected to your wallet</li>
+                <li>Try disconnecting and reconnecting your wallet</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Push notifications not working</summary>
+            <div class="faq-item__answer">
+              <p>Check these settings:</p>
+              <ul>
+                <li>Make sure notifications are enabled in SOLink Settings</li>
+                <li>Check browser notification permissions for solink.chat</li>
+                <li>On mobile: check system notification settings</li>
+                <li>Notifications only work when the app is closed or in background</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Lost my chat history</summary>
+            <div class="faq-item__answer">
+              <p>Chat history is stored locally in your browser. If you:</p>
+              <ul>
+                <li><strong>Cleared browser data:</strong> History is lost unless you have a backup</li>
+                <li><strong>Using a new device:</strong> Use Restore Backup if you have one</li>
+                <li><strong>Using incognito/private mode:</strong> Data is deleted when you close the window</li>
+              </ul>
+              <p><strong>Tip:</strong> Create regular backups in Settings → Backup & Restore</p>
+            </div>
+          </details>
+        </section>
+
+        <!-- Contact Section -->
+        <section class="contact-section">
+          <h2 class="contact-section__title">Still need help?</h2>
+          <p class="contact-section__text">Can't find what you're looking for? Our team is here to help.</p>
+          <div class="contact-section__links">
+            <a href="mailto:support@solink.chat" class="contact-btn contact-btn--primary">
+              ✉️ Email Support
+            </a>
+            <a href="https://x.com/imandrei_fyi" target="_blank" rel="noreferrer" class="contact-btn contact-btn--secondary">
+              𝕏 Twitter
+            </a>
+            <a href="https://github.com/dfnwtf/solink/issues" target="_blank" rel="noreferrer" class="contact-btn contact-btn--secondary">
+              🐛 Report Bug
+            </a>
+          </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="help-footer">
+          <div class="help-footer__links">
+            <a href="/">Home</a>
+            <a href="/app">Messenger</a>
+            <a href="/terms">Terms</a>
+            <a href="/privacy">Privacy</a>
+            <a href="/disclaimer">Disclaimer</a>
+          </div>
+          <p class="help-footer__copy">© 2025 SOLINK. Built on Solana.</p>
+        </footer>
+      </div>
+    </div>
+  </body>
+</html>
+
