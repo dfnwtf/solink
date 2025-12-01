@@ -310,6 +310,31 @@ const FORWARD_PREVIEW_LIMIT = 140;
 const REACTION_PREFIX = "__SOLINK_REACTION__";
 const AVAILABLE_REACTIONS = ["🚀", "👍", "❤️", "😂", "😮", "😢"];
 const SETTINGS_STORAGE_KEY = "solink_settings_v1";
+
+// Token Scanner
+const SCANNER_CONTACT_KEY = "__SOLINK_SCANNER__";
+const SCANNER_API_URL = "https://dfn.wtf/api/http-report";
+const SOLANA_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const SCAN_REPORT_PREFIX = "__SOLINK_SCAN_REPORT__";
+
+function parseScanReportMessage(text) {
+  if (!text || typeof text !== "string") return null;
+  
+  // Check for prefix anywhere in text (may have leading chars after decryption)
+  const prefixIndex = text.indexOf(SCAN_REPORT_PREFIX);
+  if (prefixIndex === -1) return null;
+  
+  try {
+    const jsonStr = text.slice(prefixIndex + SCAN_REPORT_PREFIX.length);
+    const report = JSON.parse(jsonStr);
+    console.log("[ScanReport] Parsed successfully:", report.tokenInfo?.name);
+    return report;
+  } catch (e) {
+    console.warn("[ScanReport] Failed to parse:", e);
+    return null;
+  }
+}
+
 const DEFAULT_SETTINGS = Object.freeze({
   soundEnabled: true,
 });
@@ -488,6 +513,7 @@ function cacheDom() {
   ui.forwardSelectionName = document.querySelector("[data-role=\"forward-selection-name\"]");
 
   ui.infoPanel = document.querySelector("[data-role=\"info-panel\"]");
+  ui.scannerPanel = document.querySelector("[data-role=\"scanner-panel\"]");
   ui.infoAvatar = document.querySelector("[data-role=\"info-avatar\"]");
   ui.infoName = document.querySelector("[data-role=\"info-name\"]");
   ui.infoPubkey = document.querySelector("[data-role=\"info-pubkey\"]");
@@ -503,6 +529,9 @@ function cacheDom() {
   ui.paymentToken = document.querySelector("[data-role=\"payment-token\"]");
   ui.paymentRecipient = document.querySelector("[data-role=\"payment-recipient\"]");
   ui.paymentSendButton = document.querySelector("[data-action=\"send-payment\"]");
+  ui.scannerPasteBtn = document.querySelector("[data-action=\"scanner-paste\"]");
+  ui.scannerClearBtn = document.querySelector("[data-action=\"scanner-clear\"]");
+  ui.scannerOpenDfnBtn = document.querySelector("[data-action=\"scanner-open-dfn\"]");
 
   ui.onboarding = document.querySelector("[data-role=\"onboarding\"]");
   ui.nicknameForm = document.querySelector("[data-role=\"nickname-form\"]");
@@ -589,6 +618,652 @@ function openSettingsView() {
   syncSettingsUI();
 }
 
+// =====================
+// TOKEN SCANNER
+// =====================
+
+async function openScannerChat() {
+  setActiveNav("scanner");
+  setSidebarView("list");
+  
+  // Set scanner as active contact
+  state.activeContactKey = SCANNER_CONTACT_KEY;
+  
+  // Load scanner messages from IndexedDB if not in memory
+  if (!state.messages.has(SCANNER_CONTACT_KEY) || state.messages.get(SCANNER_CONTACT_KEY).length === 0) {
+    const savedMessages = await getMessagesForContact(SCANNER_CONTACT_KEY);
+    if (savedMessages && savedMessages.length > 0) {
+      // Restore report objects from JSON string
+      const restoredMessages = savedMessages.map(msg => {
+        if (msg.meta?.isReport && msg.text && !msg.meta.report) {
+          try {
+            msg.meta.report = JSON.parse(msg.text);
+          } catch (e) {
+            console.warn("Failed to parse report JSON", e);
+          }
+        }
+        return msg;
+      });
+      state.messages.set(SCANNER_CONTACT_KEY, restoredMessages);
+    } else {
+      state.messages.set(SCANNER_CONTACT_KEY, []);
+    }
+  }
+  
+  // Show chat panel, hide empty state and contact info
+  if (ui.chatPanel) ui.chatPanel.hidden = false;
+  toggleEmptyState(false);
+  if (ui.contactInfo) ui.contactInfo.hidden = true;
+  
+  // Show scanner panel, hide info panel
+  if (ui.infoPanel) ui.infoPanel.hidden = true;
+  if (ui.scannerPanel) ui.scannerPanel.hidden = false;
+  
+  // Clear previous messages first
+  if (ui.messageTimeline) {
+    ui.messageTimeline.innerHTML = "";
+  }
+  
+  // Update header
+  updateChatHeader({
+    displayName: "Token Scanner",
+    subtitle: "Powered by DFN Patrol",
+    isScanner: true,
+  });
+  
+  // Show welcome message if first time
+  const messages = state.messages.get(SCANNER_CONTACT_KEY);
+  if (messages.length === 0) {
+    await addScannerSystemMessage("Welcome to Token Scanner! 🔍\n\nPaste any Solana token mint address to get a security report.");
+  } else {
+    // Render existing messages
+    renderScannerMessages();
+  }
+  
+  // Enable composer
+  toggleComposer(true);
+  ui.messageInput?.focus();
+}
+
+function updateChatHeader(opts = {}) {
+  if (opts.isScanner) {
+    if (ui.chatAvatar) {
+      ui.chatAvatar.textContent = "🔍";
+      ui.chatAvatar.style.fontSize = "1.5rem";
+      ui.chatAvatar.style.display = "flex";
+      ui.chatAvatar.style.alignItems = "center";
+      ui.chatAvatar.style.justifyContent = "center";
+    }
+    if (ui.chatName) setTextContent(ui.chatName, opts.displayName || "Token Scanner");
+    if (ui.chatStatus) setTextContent(ui.chatStatus, opts.subtitle || "");
+    return;
+  }
+  // Reset for normal contacts
+  if (ui.chatAvatar) {
+    ui.chatAvatar.style.fontSize = "";
+    ui.chatAvatar.style.display = "";
+    ui.chatAvatar.style.alignItems = "";
+    ui.chatAvatar.style.justifyContent = "";
+  }
+}
+
+async function addScannerSystemMessage(text) {
+  const message = {
+    id: crypto.randomUUID(),
+    contactKey: SCANNER_CONTACT_KEY,
+    direction: "in",
+    text,
+    timestamp: Date.now(),
+    status: "delivered",
+    meta: { isSystem: true, isScanner: true },
+  };
+  const messages = state.messages.get(SCANNER_CONTACT_KEY) || [];
+  messages.push(message);
+  state.messages.set(SCANNER_CONTACT_KEY, messages);
+  await addMessage(message);
+  renderScannerMessages();
+}
+
+async function addScannerUserMessage(text) {
+  const message = {
+    id: crypto.randomUUID(),
+    contactKey: SCANNER_CONTACT_KEY,
+    direction: "out",
+    text,
+    timestamp: Date.now(),
+    status: "sent",
+    meta: { isScanner: true },
+  };
+  const messages = state.messages.get(SCANNER_CONTACT_KEY) || [];
+  messages.push(message);
+  state.messages.set(SCANNER_CONTACT_KEY, messages);
+  await addMessage(message);
+  renderScannerMessages();
+  return message;
+}
+
+async function addScannerReportMessage(report) {
+  const message = {
+    id: crypto.randomUUID(),
+    contactKey: SCANNER_CONTACT_KEY,
+    direction: "in",
+    text: JSON.stringify(report), // Store report as JSON string for persistence
+    timestamp: Date.now(),
+    status: "delivered",
+    meta: { 
+      isReport: true,
+      isScanner: true,
+      report,
+    },
+  };
+  const messages = state.messages.get(SCANNER_CONTACT_KEY) || [];
+  messages.push(message);
+  state.messages.set(SCANNER_CONTACT_KEY, messages);
+  await addMessage(message);
+  renderScannerMessages();
+}
+
+async function handleScannerInput(text) {
+  const trimmed = text.trim();
+  
+  // Add user message
+  await addScannerUserMessage(trimmed);
+  
+  // Validate address
+  if (!SOLANA_ADDRESS_REGEX.test(trimmed)) {
+    await addScannerSystemMessage("❌ Invalid token address. Please paste a valid Solana mint address.");
+    return;
+  }
+  
+  // Show loading (don't persist to DB)
+  const loadingId = crypto.randomUUID();
+  const loadingMsg = {
+    id: loadingId,
+    contactKey: SCANNER_CONTACT_KEY,
+    direction: "in",
+    text: "⏳ Scanning token...",
+    timestamp: Date.now(),
+    status: "delivered",
+    meta: { isSystem: true, isLoading: true },
+  };
+  const messages = state.messages.get(SCANNER_CONTACT_KEY) || [];
+  messages.push(loadingMsg);
+  state.messages.set(SCANNER_CONTACT_KEY, messages);
+  renderScannerMessages();
+  
+  try {
+    const response = await fetch(`${SCANNER_API_URL}?token=${trimmed}`);
+    const report = await response.json();
+    
+    // Remove loading message (not persisted, so just from state)
+    const msgList = state.messages.get(SCANNER_CONTACT_KEY) || [];
+    const loadingIdx = msgList.findIndex(m => m.id === loadingId);
+    if (loadingIdx !== -1) {
+      msgList.splice(loadingIdx, 1);
+    }
+    
+    if (report.error) {
+      await addScannerSystemMessage(`❌ ${report.error}`);
+      return;
+    }
+    
+    await addScannerReportMessage(report);
+  } catch (error) {
+    console.error("Scanner error:", error);
+    // Remove loading message
+    const msgList = state.messages.get(SCANNER_CONTACT_KEY) || [];
+    const loadingIdx = msgList.findIndex(m => m.id === loadingId);
+    if (loadingIdx !== -1) {
+      msgList.splice(loadingIdx, 1);
+    }
+    await addScannerSystemMessage("❌ Failed to scan token. Please try again.");
+  }
+}
+
+function renderScannerMessages() {
+  if (!ui.messageTimeline) return;
+  
+  // Only render if scanner is active
+  if (state.activeContactKey !== SCANNER_CONTACT_KEY) return;
+  
+  ui.messageTimeline.innerHTML = "";
+  
+  const messages = state.messages.get(SCANNER_CONTACT_KEY) || [];
+  
+  for (const message of messages) {
+    let bubble;
+    if (message.meta?.isReport) {
+      bubble = createScannerReportBubble(message.meta.report, message.direction || "in", message.timestamp, message.status);
+    } else if (message.meta?.isSystem) {
+      bubble = createScannerSystemBubble(message.text);
+    } else {
+      bubble = createScannerUserBubble(message.text);
+    }
+    bubble.dataset.messageId = message.id;
+    ui.messageTimeline.appendChild(bubble);
+  }
+  
+  // Scroll to bottom
+  ui.messageTimeline.scrollTop = ui.messageTimeline.scrollHeight;
+}
+
+function createScannerSystemBubble(text) {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble bubble--in bubble--scanner-system";
+  
+  const textEl = document.createElement("div");
+  textEl.className = "bubble__text";
+  textEl.style.whiteSpace = "pre-wrap";
+  textEl.textContent = text;
+  
+  bubble.appendChild(textEl);
+  return bubble;
+}
+
+function createScannerUserBubble(text) {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble bubble--out";
+  
+  const textEl = document.createElement("div");
+  textEl.className = "bubble__text";
+  textEl.textContent = text;
+  
+  bubble.appendChild(textEl);
+  return bubble;
+}
+
+function createScannerReportBubble(report, direction = "in", timestamp = null, status = "sent") {
+  const bubble = document.createElement("div");
+  bubble.className = `bubble bubble--${direction} bubble--scanner-report`;
+  
+  const card = document.createElement("div");
+  card.className = "scanner-report";
+  
+  // Header
+  const header = document.createElement("div");
+  header.className = "scanner-report__header";
+  
+  const logoWrapper = document.createElement("div");
+  logoWrapper.className = "scanner-report__logo";
+  if (report.tokenInfo?.logoUrl) {
+    const logo = document.createElement("img");
+    logo.src = report.tokenInfo.logoUrl;
+    logo.alt = report.tokenInfo?.symbol || "";
+    logo.onerror = () => { logo.style.display = "none"; logoWrapper.textContent = "🪙"; };
+    logoWrapper.appendChild(logo);
+  } else {
+    logoWrapper.textContent = "🪙";
+  }
+  
+  const titleBlock = document.createElement("div");
+  titleBlock.className = "scanner-report__title-block";
+  
+  const name = document.createElement("div");
+  name.className = "scanner-report__name";
+  name.textContent = report.tokenInfo?.name || "Unknown Token";
+  
+  const symbol = document.createElement("div");
+  symbol.className = "scanner-report__symbol";
+  const launchpad = report.security?.launchpad ? ` · ${report.security.launchpad}` : "";
+  symbol.textContent = `$${report.tokenInfo?.symbol || "???"}${launchpad}`;
+  
+  titleBlock.appendChild(name);
+  titleBlock.appendChild(symbol);
+  
+  // Trust Score
+  const scoreWrapper = document.createElement("div");
+  scoreWrapper.className = "scanner-report__score";
+  
+  const score = report.trustScore ?? 0;
+  let scoreClass = "safe";
+  let scoreLabel = "Safe";
+  if (score < 30) { scoreClass = "danger"; scoreLabel = "Danger"; }
+  else if (score < 50) { scoreClass = "risky"; scoreLabel = "Risky"; }
+  else if (score < 70) { scoreClass = "caution"; scoreLabel = "Caution"; }
+  
+  scoreWrapper.classList.add(`scanner-report__score--${scoreClass}`);
+  scoreWrapper.innerHTML = `
+    <span class="scanner-report__score-value">${score}%</span>
+    <span class="scanner-report__score-label">${scoreLabel}</span>
+  `;
+  
+  header.appendChild(logoWrapper);
+  header.appendChild(titleBlock);
+  header.appendChild(scoreWrapper);
+  card.appendChild(header);
+  
+  // Market Data
+  const market = document.createElement("div");
+  market.className = "scanner-report__market";
+  
+  const price = report.market?.priceUsd ? `$${parseFloat(report.market.priceUsd).toFixed(8)}` : "N/A";
+  const change = report.market?.priceChange?.h24;
+  const changeStr = change != null ? `(${change >= 0 ? "+" : ""}${change.toFixed(2)}%)` : "";
+  const changeClass = change >= 0 ? "positive" : "negative";
+  
+  const mc = report.market?.marketCap ? formatCompactNumber(report.market.marketCap) : "N/A";
+  const liq = report.market?.liquidity ? formatCompactNumber(report.market.liquidity) : "N/A";
+  const vol = report.market?.volume24h ? formatCompactNumber(report.market.volume24h) : "N/A";
+  
+  market.innerHTML = `
+    <div class="scanner-report__price">
+      <span>Price:</span> <strong>${price}</strong> <span class="scanner-report__change scanner-report__change--${changeClass}">${changeStr}</span>
+    </div>
+    <div class="scanner-report__stats">
+      <span>MC: <strong>${mc}</strong></span>
+      <span>Liq: <strong>${liq}</strong></span>
+      <span>Vol: <strong>${vol}</strong></span>
+    </div>
+  `;
+  card.appendChild(market);
+  
+  // Security Flags - Extended
+  const flags = document.createElement("div");
+  flags.className = "scanner-report__flags";
+  
+  const sec = report.security || {};
+  const flagItems = [
+    // Green flags (good)
+    { ok: sec.mintRenounced, label: "Mint renounced", warn: "Mint active", show: true },
+    { ok: !sec.freezeAuthorityEnabled, label: "No freeze", warn: "Freeze enabled", show: true },
+    { ok: sec.lpStatus === "Locked/Burned" || sec.lpStatus === "Burned", label: "LP Locked/Burned", warn: `LP: ${sec.lpStatus || "Unlocked"}`, show: true },
+    { ok: !sec.isMutable, label: "Immutable", warn: "Mutable metadata", show: true },
+    { ok: sec.noTransferTax, label: "No tax", warn: `Tax: ${sec.transferTax || 0}%`, show: true },
+    { ok: sec.isDexVerified, label: "DEX Paid", warn: "DEX Not Paid", show: true },
+    { ok: sec.isCto, label: "CTO", warn: null, show: sec.isCto },
+    { ok: sec.hasActiveAd, label: "Active Ad", warn: null, show: sec.hasActiveAd },
+    // Warnings only (red flags)
+    { ok: false, label: null, warn: "Hacker wallet detected!", show: !!sec.hackerFound },
+    { ok: (sec.holderConcentration || 0) <= 25, label: `Top10: ${(sec.holderConcentration || 0).toFixed(1)}%`, warn: `Top10: ${(sec.holderConcentration || 0).toFixed(1)}% ⚠️`, show: true },
+  ];
+  
+  for (const f of flagItems) {
+    if (!f.show) continue;
+    if (f.ok && !f.label) continue;
+    if (!f.ok && !f.warn) continue;
+    
+    const flag = document.createElement("span");
+    flag.className = `scanner-report__flag scanner-report__flag--${f.ok ? "ok" : "warn"}`;
+    flag.textContent = `${f.ok ? "✅" : "❌"} ${f.ok ? f.label : f.warn}`;
+    flags.appendChild(flag);
+  }
+  card.appendChild(flags);
+  
+  // Top Holders section
+  const concentration = report.security?.holderConcentration?.toFixed(2) || "0";
+  if (concentration > 0 || report.distribution?.topHolders?.length) {
+    const holders = document.createElement("div");
+    holders.className = "scanner-report__section";
+    holders.innerHTML = `<div class="scanner-report__section-title">📊 Top 10 Holders: ${concentration}%</div>`;
+    
+    // Only show holder list if not shared and has data
+    if (!report.isShared && report.distribution?.topHolders?.length) {
+      const holderList = document.createElement("div");
+      holderList.className = "scanner-report__holders";
+      
+      const allHolders = report.distribution.topHolders.slice(0, 10);
+      allHolders.forEach((h, idx) => {
+        const row = document.createElement("div");
+        row.className = "scanner-report__holder";
+        if (idx >= 5) row.classList.add("scanner-report__holder--hidden");
+        row.innerHTML = `<span class="scanner-report__holder-idx">${idx + 1}.</span><span class="scanner-report__holder-addr">${shortenAddress(h.address)}</span><span class="scanner-report__holder-pct">${h.percent}%</span>`;
+        holderList.appendChild(row);
+      });
+      
+      holders.appendChild(holderList);
+      
+      // Expand button if more than 5 holders
+      if (allHolders.length > 5) {
+        const expandBtn = document.createElement("button");
+        expandBtn.type = "button";
+        expandBtn.className = "scanner-report__expand-btn";
+        const extraCount = allHolders.length - 5;
+        expandBtn.textContent = `Show ${extraCount} more`;
+        expandBtn.dataset.expanded = "false";
+        expandBtn.addEventListener("click", () => {
+          const isExpanded = expandBtn.dataset.expanded === "true";
+          const extraRows = holderList.querySelectorAll(".scanner-report__holder:nth-child(n+6)");
+          extraRows.forEach(r => {
+            if (isExpanded) {
+              r.classList.add("scanner-report__holder--hidden");
+            } else {
+              r.classList.remove("scanner-report__holder--hidden");
+            }
+          });
+          expandBtn.textContent = isExpanded ? `Show ${extraCount} more` : "Show less";
+          expandBtn.dataset.expanded = isExpanded ? "false" : "true";
+        });
+        holders.appendChild(expandBtn);
+      }
+    }
+    
+    card.appendChild(holders);
+  }
+  
+  // Clusters
+  const clusterCount = report.clusterCount ?? report.clusters?.length ?? 0;
+  if (clusterCount > 0) {
+    const clusters = document.createElement("div");
+    clusters.className = "scanner-report__section";
+    clusters.innerHTML = `<div class="scanner-report__section-title">🔗 Detected Clusters: ${clusterCount}</div>`;
+    
+    // Only show cluster details if not shared
+    if (!report.isShared && report.clusters?.length) {
+      const clusterList = document.createElement("div");
+      clusterList.className = "scanner-report__clusters";
+      
+      for (const c of report.clusters.slice(0, 5)) {
+        const row = document.createElement("div");
+        row.className = "scanner-report__cluster";
+        const reason = c.isDeveloperCluster ? "developer" : "same funder";
+        row.innerHTML = `<span>${c.addresses?.length || 0} addr</span><span>${(c.supplyPct || 0).toFixed(2)}%</span><span class="scanner-report__cluster-reason">${reason}</span>`;
+        clusterList.appendChild(row);
+      }
+      
+      clusters.appendChild(clusterList);
+    }
+    card.appendChild(clusters);
+  }
+  
+  // Socials
+  if (report.socials?.length) {
+    const socials = document.createElement("div");
+    socials.className = "scanner-report__socials";
+    
+    for (const s of report.socials.slice(0, 5)) {
+      const link = document.createElement("a");
+      link.href = s.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "scanner-report__social-link";
+      
+      let icon = "🔗";
+      if (s.type === "twitter") icon = "𝕏";
+      else if (s.type === "telegram") icon = "📱";
+      else if (s.type === "website") icon = "🌐";
+      else if (s.type === "dexscreener") icon = "📊";
+      
+      link.textContent = `${icon} ${s.label || s.type}`;
+      socials.appendChild(link);
+    }
+    
+    card.appendChild(socials);
+  }
+  
+  // Footer
+  const footer = document.createElement("div");
+  footer.className = "scanner-report__footer";
+  
+  // Only show Rescan for non-shared reports
+  if (!report.isShared) {
+    const buttonsRow = document.createElement("div");
+    buttonsRow.className = "scanner-report__buttons";
+    
+    const rescanBtn = document.createElement("button");
+    rescanBtn.type = "button";
+    rescanBtn.className = "scanner-report__btn";
+    rescanBtn.textContent = "Rescan";
+    rescanBtn.addEventListener("click", () => {
+      const tokenAddr = report.tokenInfo?.address;
+      if (tokenAddr) {
+        handleScannerInput(tokenAddr);
+      }
+    });
+    
+    buttonsRow.appendChild(rescanBtn);
+    footer.appendChild(buttonsRow);
+  }
+  
+  const fullReportLink = document.createElement("a");
+  fullReportLink.href = `https://dfn.wtf/patrol/${report.tokenInfo?.address || ""}`;
+  fullReportLink.target = "_blank";
+  fullReportLink.rel = "noopener noreferrer";
+  fullReportLink.className = "scanner-report__full-link";
+  fullReportLink.textContent = "Full Report ↗";
+  
+  // Time and status inside card
+  const meta = document.createElement("div");
+  meta.className = "scanner-report__meta";
+  if (timestamp) {
+    const timeSpan = document.createElement("span");
+    timeSpan.textContent = formatTime(timestamp);
+    meta.appendChild(timeSpan);
+  }
+  if (direction === "out") {
+    const statusEl = document.createElement("span");
+    statusEl.className = "scanner-report__status";
+    statusEl.textContent = status || "sent";
+    meta.appendChild(statusEl);
+  }
+  
+  footer.appendChild(fullReportLink);
+  footer.appendChild(meta);
+  card.appendChild(footer);
+  
+  bubble.appendChild(card);
+  
+  return bubble;
+}
+
+function formatCompactNumber(num) {
+  if (num >= 1e9) return (num / 1e9).toFixed(2) + "B";
+  if (num >= 1e6) return (num / 1e6).toFixed(2) + "M";
+  if (num >= 1e3) return (num / 1e3).toFixed(2) + "K";
+  return num.toFixed(2);
+}
+
+function shortenAddress(addr) {
+  if (!addr || addr.length < 10) return addr || "";
+  return addr.slice(0, 4) + "..." + addr.slice(-4);
+}
+
+function showShareReportModal(report) {
+  // Get contacts list
+  const contacts = Array.from(state.contacts.values()).filter(c => c.pubkey !== SCANNER_CONTACT_KEY);
+  
+  if (contacts.length === 0) {
+    showToast("No contacts to share with");
+    return;
+  }
+  
+  // Create modal
+  const modal = document.createElement("div");
+  modal.className = "share-modal";
+  modal.innerHTML = `
+    <div class="share-modal__backdrop"></div>
+    <div class="share-modal__content">
+      <div class="share-modal__header">
+        <h3>Share Report</h3>
+        <button type="button" class="share-modal__close">✕</button>
+      </div>
+      <div class="share-modal__list"></div>
+    </div>
+  `;
+  
+  const listEl = modal.querySelector(".share-modal__list");
+  
+  for (const contact of contacts) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "share-modal__item";
+    
+    const displayName = contact.localName || contact.displayName || (contact.nickname ? `@${contact.nickname}` : null) || shortenPubkey(contact.pubkey, 6);
+    const initial = (displayName.startsWith("@") ? displayName.charAt(1) : displayName.charAt(0)).toUpperCase();
+    
+    item.innerHTML = `
+      <span class="share-modal__avatar">${initial}</span>
+      <span class="share-modal__name">${displayName}</span>
+    `;
+    
+    item.addEventListener("click", () => {
+      shareReportToContact(report, contact.pubkey);
+      modal.remove();
+    });
+    
+    listEl.appendChild(item);
+  }
+  
+  // Close handlers
+  modal.querySelector(".share-modal__backdrop").addEventListener("click", () => modal.remove());
+  modal.querySelector(".share-modal__close").addEventListener("click", () => modal.remove());
+  
+  document.body.appendChild(modal);
+}
+
+async function shareReportToContact(report, contactPubkey) {
+  // Create minimal scan report - only essential data for card display
+  const reportPayload = {
+    tokenInfo: {
+      name: report.tokenInfo?.name,
+      symbol: report.tokenInfo?.symbol,
+      address: report.tokenInfo?.address,
+      logoUrl: report.tokenInfo?.logoUrl,
+    },
+    trustScore: report.trustScore,
+    market: {
+      priceUsd: report.market?.priceUsd,
+      marketCap: report.market?.marketCap,
+      liquidity: report.market?.liquidity,
+      volume24h: report.market?.volume24h,
+      priceChange: report.market?.priceChange,
+    },
+    security: {
+      launchpad: report.security?.launchpad,
+      mintRenounced: report.security?.mintRenounced,
+      freezeAuthorityEnabled: report.security?.freezeAuthorityEnabled,
+      lpStatus: report.security?.lpStatus,
+      isMutable: report.security?.isMutable,
+      noTransferTax: report.security?.noTransferTax,
+      transferTax: report.security?.transferTax,
+      isDexVerified: report.security?.isDexVerified,
+      isCto: report.security?.isCto,
+      hasActiveAd: report.security?.hasActiveAd,
+      holderConcentration: report.security?.holderConcentration,
+    },
+      // Don't include individual holders for shared reports
+    isShared: true,
+    // Cluster count only
+    clusterCount: (report.clusters || []).length,
+    // Only first 3 socials
+    socials: (report.socials || []).slice(0, 3).map(s => ({
+      type: s.type,
+      label: s.label,
+      url: s.url,
+    })),
+  };
+  
+  const shareText = SCAN_REPORT_PREFIX + JSON.stringify(reportPayload);
+  
+  // Switch to contact chat with proper navigation update
+  setActiveNav("all");
+  await setActiveContact(contactPubkey);
+  
+  // Use handleSendMessage which handles encryption etc
+  await handleSendMessage(shareText);
+  
+  showToast("Report shared!");
+}
+
 function bindEvents() {
   ui.navButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -600,6 +1275,10 @@ function bindEvents() {
       }
       if (target === "settings") {
         openSettingsView();
+        return;
+      }
+      if (target === "scanner") {
+        openScannerChat();
         return;
       }
       if (state.sidebarView !== "list") {
@@ -781,6 +1460,37 @@ function bindEvents() {
     await refreshContacts();
     clearChatView();
     showToast("Contact removed");
+  });
+
+  // Scanner panel actions
+  ui.scannerPasteBtn?.addEventListener("click", async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && SOLANA_ADDRESS_REGEX.test(text.trim())) {
+        await handleScannerInput(text.trim());
+      } else {
+        showToast("No valid Solana address in clipboard");
+      }
+    } catch (err) {
+      showToast("Unable to read clipboard");
+    }
+  });
+
+  ui.scannerClearBtn?.addEventListener("click", async () => {
+    const confirmed = await showConfirmDialog(
+      "Clear scanner history",
+      "Are you sure you want to delete all scan history? This action cannot be undone."
+    );
+    if (!confirmed) return;
+    await clearChatMessages(SCANNER_CONTACT_KEY);
+    state.messages.set(SCANNER_CONTACT_KEY, []);
+    if (ui.messageTimeline) ui.messageTimeline.innerHTML = "";
+    await addScannerSystemMessage("Welcome to Token Scanner! 🔍\n\nPaste any Solana token mint address to get a security report.");
+    showToast("Scanner history cleared");
+  });
+
+  ui.scannerOpenDfnBtn?.addEventListener("click", () => {
+    window.open("https://dfn.wtf/patrol", "_blank", "noopener,noreferrer");
   });
 
   ui.toggleFavoriteButton?.addEventListener("click", async () => {
@@ -1925,6 +2635,17 @@ function getMessagePreviewText(message) {
   if (nicknameChange) {
     return `Changed nickname: ${nicknameChange.oldName} → ${nicknameChange.newName}`;
   }
+  // Check for scan report
+  if (message.meta?.isReport && message.meta?.report) {
+    return `Scan Report: ${message.meta.report.tokenInfo?.name || "Token"}`;
+  }
+  const text = message.text || "";
+  if (text.includes(SCAN_REPORT_PREFIX)) {
+    const report = parseScanReportMessage(text);
+    if (report) {
+      return `Scan Report: ${report.tokenInfo?.name || "Token"}`;
+    }
+  }
   const forwardMeta = ensureForwardMeta(message);
   const replyMeta = ensureReplyMeta(message);
   const baseText = message.text || "";
@@ -2157,6 +2878,15 @@ function createMessageBubble(message, highlightQueryText) {
   if (ensureNicknameChangeMeta(message)) {
     return createNicknameChangeBubble(message);
   }
+  
+  // Check for scan report message
+  const scanReport = parseScanReportMessage(message.text);
+  if (scanReport) {
+    console.log("[ScanReport] Rendering card for:", scanReport.tokenInfo?.name);
+    const reportBubble = createScannerReportBubble(scanReport, message.direction || "in", message.timestamp, message.status);
+    reportBubble.dataset.messageId = message.id;
+    return reportBubble;
+  }
 
   const bubble = document.createElement("div");
   bubble.className = `bubble bubble--${message.direction === "out" ? "out" : "in"}`;
@@ -2303,6 +3033,17 @@ function createNicknameChangeBubble(message) {
 function createReplyPreviewBlock(replyMeta) {
   const wrapper = document.createElement("div");
   wrapper.className = "bubble__reply";
+  
+  // Make clickable if we have original message ID
+  if (replyMeta.id) {
+    wrapper.dataset.replyId = replyMeta.id;
+    wrapper.style.cursor = "pointer";
+    wrapper.addEventListener("click", (e) => {
+      e.stopPropagation();
+      scrollToMessage(replyMeta.id);
+    });
+  }
+  
   const author = document.createElement("div");
   author.className = "bubble__reply-author";
   author.textContent = replyMeta.author || "Reply";
@@ -2312,6 +3053,25 @@ function createReplyPreviewBlock(replyMeta) {
   wrapper.appendChild(author);
   wrapper.appendChild(text);
   return wrapper;
+}
+
+function scrollToMessage(messageId) {
+  if (!messageId) return;
+  
+  const bubble = document.querySelector(`[data-message-id="${messageId}"]`);
+  if (!bubble) {
+    showToast("Message not found");
+    return;
+  }
+  
+  // Scroll to message
+  bubble.scrollIntoView({ behavior: "smooth", block: "center" });
+  
+  // Highlight animation
+  bubble.classList.add("bubble--highlight");
+  setTimeout(() => {
+    bubble.classList.remove("bubble--highlight");
+  }, 1500);
 }
 
 function createLinkPreviewBlock(preview) {
@@ -2644,6 +3404,17 @@ function buildForwardMeta(record) {
   if (existingMeta) {
     return existingMeta;
   }
+  
+  // Handle scanner messages
+  if (record.contactKey === SCANNER_CONTACT_KEY) {
+    return {
+      author: "Token Scanner",
+      authorPubkey: "",
+      originalMessageId: record.message.id || null,
+      timestamp: record.message.timestamp || Date.now(),
+    };
+  }
+  
   const isOutgoing = record.message.direction === "out";
   const authorName = isOutgoing ? getSelfDisplayName() : getContactDisplayName(record.contactKey);
   const authorPubkey = isOutgoing
@@ -2700,7 +3471,21 @@ function hideForwardModal() {
 
 function updateForwardSubtitle(record) {
   if (!ui.forwardSubtitle) return;
-  const preview = truncateText(record?.message?.text || "[No text]", FORWARD_PREVIEW_LIMIT);
+  const message = record?.message;
+  const text = message?.text || "";
+  
+  // Check if it's a scan report (via meta or prefix)
+  if (message?.meta?.isReport && message?.meta?.report) {
+    const name = message.meta.report.tokenInfo?.name || "Token";
+    ui.forwardSubtitle.textContent = `Scan Report: ${name}`;
+    return;
+  }
+  if (text.includes(SCAN_REPORT_PREFIX)) {
+    const report = parseScanReportMessage(text);
+    ui.forwardSubtitle.textContent = `Scan Report: ${report?.tokenInfo?.name || "Token"}`;
+    return;
+  }
+  const preview = truncateText(text || "[No text]", FORWARD_PREVIEW_LIMIT);
   ui.forwardSubtitle.textContent = preview;
 }
 
@@ -2785,6 +3570,66 @@ async function forwardMessageToContact(record, targetPubkey) {
     return;
   }
   const message = record.message;
+  
+  // Handle scanner report messages - send as scan report, not forward
+  if (message.meta?.isReport && message.meta?.report) {
+    const report = message.meta.report;
+    // Create minimal payload to avoid message truncation
+    const reportPayload = {
+      tokenInfo: {
+        name: report.tokenInfo?.name,
+        symbol: report.tokenInfo?.symbol,
+        address: report.tokenInfo?.address,
+        logoUrl: report.tokenInfo?.logoUrl,
+      },
+      trustScore: report.trustScore,
+      market: {
+        priceUsd: report.market?.priceUsd,
+        marketCap: report.market?.marketCap,
+        liquidity: report.market?.liquidity,
+        volume24h: report.market?.volume24h,
+        priceChange: report.market?.priceChange,
+      },
+      security: {
+        launchpad: report.security?.launchpad,
+        mintRenounced: report.security?.mintRenounced,
+        freezeAuthorityEnabled: report.security?.freezeAuthorityEnabled,
+        lpStatus: report.security?.lpStatus,
+        isMutable: report.security?.isMutable,
+        noTransferTax: report.security?.noTransferTax,
+        transferTax: report.security?.transferTax,
+        isDexVerified: report.security?.isDexVerified,
+        isCto: report.security?.isCto,
+        hasActiveAd: report.security?.hasActiveAd,
+        holderConcentration: report.security?.holderConcentration,
+      },
+      isShared: true,
+      clusterCount: (report.clusters || []).length,
+      socials: (report.socials || []).slice(0, 3).map(s => ({
+        type: s.type,
+        label: s.label,
+        url: s.url,
+      })),
+    };
+    const shareText = SCAN_REPORT_PREFIX + JSON.stringify(reportPayload);
+    
+    setActiveNav("all");
+    await setActiveContact(normalizedTarget);
+    await handleSendMessage(shareText);
+    showToast("Report shared");
+    return;
+  }
+  
+  // Check if message text is already a scan report
+  const existingReport = parseScanReportMessage(message.text);
+  if (existingReport) {
+    setActiveNav("all");
+    await setActiveContact(normalizedTarget);
+    await handleSendMessage(message.text);
+    showToast("Report shared");
+    return;
+  }
+  
   const baseText = (message.text || "").slice(0, MAX_MESSAGE_LENGTH);
   const forwardMeta = buildForwardMeta(record);
   const envelope = createForwardEnvelope(forwardMeta, baseText);
@@ -4224,6 +5069,12 @@ async function handleSendMessage(text) {
     return;
   }
 
+  // Handle scanner input separately
+  if (state.activeContactKey === SCANNER_CONTACT_KEY) {
+    await handleScannerInput(text);
+    return;
+  }
+
   const trimmed = text.slice(0, MAX_MESSAGE_LENGTH);
   const activeReplyContext = getActiveReplyContext();
   const replyEnvelope = activeReplyContext ? createReplyEnvelope(activeReplyContext, trimmed) : null;
@@ -4602,6 +5453,15 @@ async function setActiveContact(pubkey) {
     showToast("Invalid contact");
     return;
   }
+
+  // Switch nav to All Chats when opening a contact
+  if (state.activeNav === "scanner") {
+    setActiveNav("all");
+  }
+
+  // Hide scanner panel, show info panel
+  if (ui.scannerPanel) ui.scannerPanel.hidden = true;
+  if (ui.infoPanel) ui.infoPanel.hidden = false;
 
   state.activeContactKey = normalized;
   updateContactListSelection();
