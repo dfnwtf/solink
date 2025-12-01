@@ -2761,6 +2761,7 @@ button:disabled {
   padding-top: 0.4rem;
   padding-bottom: 0.5rem;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .chat-item {
@@ -2934,6 +2935,7 @@ button:disabled {
   gap: 1.05rem;
   padding: 1.8rem 2.3rem;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.08), transparent 55%), var(--surface-1);
 }
 
@@ -2972,6 +2974,9 @@ button:disabled {
   border: 1px solid rgba(255, 255, 255, 0.03);
   color: var(--text-primary);
   box-shadow: 0 16px 26px rgba(2, 3, 6, 0.65);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .bubble--out {
@@ -3033,6 +3038,8 @@ button:disabled {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .bubble__text mark {
@@ -3995,6 +4002,55 @@ button:disabled {
   }
 }
 
+/* Swipe indicators for mobile */
+.swipe-indicator {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.swipe-indicator svg {
+  width: 20px;
+  height: 20px;
+}
+
+.swipe-indicator--reply {
+  background: rgba(57, 242, 206, 0.2);
+  color: var(--accent-secondary);
+}
+
+.swipe-indicator--delete {
+  background: rgba(255, 77, 77, 0.2);
+  color: #ff4d4d;
+}
+
+.swipe-indicator.is-ready {
+  transform: translateY(-50%) scale(1.2);
+}
+
+.swipe-indicator.is-ready.swipe-indicator--reply {
+  background: rgba(57, 242, 206, 0.4);
+}
+
+.swipe-indicator.is-ready.swipe-indicator--delete {
+  background: rgba(255, 77, 77, 0.4);
+}
+
+/* Message wrapper for swipe */
+.message-wrap {
+  position: relative;
+}
+
 .bubble__reply {
   align-self: stretch;
   border-left: 3px solid rgba(255, 255, 255, 0.4);
@@ -4311,6 +4367,149 @@ button:disabled {
   opacity: 0;
 }
 
+/* Push Notifications Modal */
+.push-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.push-modal.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.push-modal[hidden] {
+  display: none;
+}
+
+.push-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 4, 10, 0.75);
+  backdrop-filter: blur(8px);
+}
+
+.push-modal__panel {
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 2rem 2.5rem;
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  transform: translateY(20px) scale(0.95);
+  transition: transform 0.25s ease;
+}
+
+.push-modal.is-visible .push-modal__panel {
+  transform: translateY(0) scale(1);
+}
+
+.push-modal__icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  animation: bellRing 0.5s ease-in-out 0.3s;
+}
+
+@keyframes bellRing {
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(15deg); }
+  40% { transform: rotate(-15deg); }
+  60% { transform: rotate(10deg); }
+  80% { transform: rotate(-5deg); }
+}
+
+.push-modal__title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 0.75rem;
+}
+
+.push-modal__description {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0 0 0.5rem;
+}
+
+.push-modal__note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0 0 1.5rem;
+}
+
+.push-modal__actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.push-modal__actions .ghost-button,
+.push-modal__actions .primary-button {
+  flex: 1;
+  max-width: 140px;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch__slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 26px;
+  transition: background 0.2s ease;
+}
+
+.toggle-switch__slider::before {
+  content: "";
+  position: absolute;
+  height: 20px;
+  width: 20px;
+  left: 3px;
+  bottom: 3px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.toggle-switch input:checked + .toggle-switch__slider {
+  background: rgba(57, 242, 206, 0.3);
+}
+
+.toggle-switch input:checked + .toggle-switch__slider::before {
+  transform: translateX(22px);
+  background: var(--accent-secondary);
+}
+
+.toggle-switch input:disabled + .toggle-switch__slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .forward-modal {
   position: fixed;
   inset: 0;
@@ -4394,6 +4593,7 @@ button:disabled {
   min-height: 200px;
   max-height: 50vh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -5594,6 +5794,7 @@ button[aria-label="Close"] {
 
 .share-modal__list {
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 8px;
 }
 
@@ -5770,6 +5971,7 @@ button[aria-label="Close"] {
   border-radius: 20px 20px 0 0;
   padding: 0.5rem 1.25rem calc(1.5rem + env(safe-area-inset-bottom, 0));
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   transform: translateY(100%);
   transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -5996,6 +6198,12 @@ button[aria-label="Close"] {
 @media (max-width: 720px) {
   .app-layout {
     grid-template-columns: 1fr;
+    overflow-x: hidden;
+  }
+  
+  html, body {
+    overflow-x: hidden;
+    max-width: 100vw;
   }
   
   .nav-rail {
@@ -6016,6 +6224,8 @@ button[aria-label="Close"] {
     transform: translateX(0);
     z-index: 40;
     transition: transform 220ms ease;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
   
   /* When chat is active, hide list and show chat */
@@ -6029,6 +6239,9 @@ button[aria-label="Close"] {
     transform: translateX(100%);
     transition: transform 220ms ease;
     z-index: 45;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
   
   .app-layout.chat-active .chat-column {
@@ -6062,6 +6275,7 @@ button[aria-label="Close"] {
   /* Adjust timeline padding */
   .timeline {
     padding: 1rem;
+    overflow-x: hidden;
   }
   
   /* Adjust bubble max-width for mobile */
