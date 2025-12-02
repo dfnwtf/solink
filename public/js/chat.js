@@ -5704,22 +5704,16 @@ async function handleImportFileChange(event) {
         return;
       }
       
-      // Verify backup signature
-      const verification = await verifyBackupSignature(parsed, currentWallet);
-      
-      if (!verification.valid) {
-        console.warn('[Import] Verification failed:', verification.reason);
-        if (verification.reason === 'WALLET_MISMATCH') {
-          showToast("Backup belongs to a different wallet");
-        } else if (verification.reason === 'INVALID_SIGNATURE') {
-          showToast("Backup signature is invalid or tampered");
-        } else {
-          showToast("Backup verification failed");
-        }
+      // Verify backup ownership (wallet must match, signature is optional)
+      if (parsed.ownerWallet && parsed.ownerWallet !== currentWallet) {
+        console.warn('[Import] Wallet mismatch:', parsed.ownerWallet, '!==', currentWallet);
+        showToast("Backup belongs to a different wallet");
         return;
       }
       
+      console.log('[Import] Wallet check passed, importing data...');
       await importLocalData(parsed, currentWallet);
+      console.log('[Import] Data imported to IndexedDB');
       
       // Restore localStorage settings if present
       if (parsed.localStorageSettings) {
