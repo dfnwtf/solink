@@ -8,6 +8,9 @@ const DEFAULT_SESSION_TTL_SECONDS = 60 * 60; // 1 hour default
 const MIN_SESSION_TTL_SECONDS = 15 * 60; // 15 minutes minimum
 const MAX_SESSION_TTL_SECONDS = 12 * 60 * 60; // 12 hours maximum
 const MAX_MESSAGE_LENGTH = 1024;
+const MAX_VOICE_SIZE = 2 * 1024 * 1024; // 2MB max
+const MAX_VOICE_DURATION_SEC = 120; // 2 minutes
+const VOICE_PREFIX = 'voice/';
 
 // CORS: Allowed origins for security
 const ALLOWED_ORIGINS = [
@@ -417,10 +420,20 @@ export default {
         return handleSyncBackup(request, env);
       case '/api/sync/chats':
         return handleSyncChatsList(request, env);
+      case '/api/voice/upload':
+        return handleVoiceUpload(request, env);
+      case '/api/voice/delete':
+        return handleVoiceDelete(request, url, env);
+      case '/api/voice':
+        return handleVoiceDownload(request, url, env);
       default:
         // Handle dynamic routes like /api/sync/chat/:contactKey
         if (url.pathname.startsWith('/api/sync/chat/')) {
           return handleSyncChat(request, url, env);
+        }
+        // Handle dynamic route for /api/voice/:id
+        if (url.pathname.startsWith('/api/voice/')) {
+          return handleVoiceDownload(request, url, env);
         }
         return new Response('Not Found', { status: 404 });
     }
@@ -494,8 +507,8 @@ async function handleSendMessage(request, env) {
     return errorResponse(request, 'Invalid JSON payload');
   }
 
-  const { to, text, timestamp, ciphertext, nonce, version, tokenPreview, senderEncryptionKey: clientSenderKey } = body;
-  if (!to || (!text && !ciphertext)) {
+  const { to, text, timestamp, ciphertext, nonce, version, tokenPreview, senderEncryptionKey: clientSenderKey, voiceKey, voiceDuration, voiceNonce, voiceMimeType, voiceWaveform } = body;
+  if (!to || (!text && !ciphertext && !voiceKey)) {
     return errorResponse(request, 'Missing fields');
   }
 
@@ -570,6 +583,12 @@ async function handleSendMessage(request, env) {
     // Prioritize client-provided key (always fresh) over profile key (may be stale due to KV eventual consistency)
     senderEncryptionKey: clientSenderKey || senderProfile?.encryptionPublicKey || null,
     tokenPreview: sanitizedTokenPreview,
+    // Voice message fields
+    voiceKey: voiceKey || null,
+    voiceDuration: Number.isFinite(voiceDuration) ? voiceDuration : null,
+    voiceNonce: voiceNonce || null,
+    voiceMimeType: voiceMimeType || null,
+    voiceWaveform: voiceWaveform || null,
     expiresAt: Date.now() + INBOX_DELIVERY_TTL_MS,
   };
 
@@ -578,10 +597,11 @@ async function handleSendMessage(request, env) {
     
     // Send push notification to recipient
     console.log(`[Push] Attempting to send push to ${recipientPubkey}`);
+    const pushBody = voiceKey ? '🎤 Voice message' : 'New message';
     try {
       await sendPushNotification(env, recipientPubkey, {
         title: senderDisplayName || senderNickname || shortenPubkey(senderPubkey),
-        body: 'New message',
+        body: pushBody,
         icon: '/icons/icon-192.png',
         badge: '/icons/badge-72.png',
         tag: `solink-${senderPubkey}`,
@@ -2052,6 +2072,171 @@ async function handleSyncBackup(request, env) {
 
   } else {
     return new Response('Method Not Allowed', { status: 405 });
+  }
+}
+
+// ============================================
+// VOICE MESSAGE HANDLERS
+// ============================================
+
+async function handleVoiceUpload(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const senderPubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!senderPubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  const body = await readJson(request);
+  if (!body) {
+    return errorResponse(request, 'Invalid JSON payload');
+  }
+
+  const { recipientPubkey, messageId, encryptedAudio, duration, mimeType } = body;
+
+  // Validation
+  if (!recipientPubkey || !BASE58_REGEX.test(recipientPubkey)) {
+    return errorResponse(request, 'Invalid recipient');
+  }
+  if (!messageId || typeof messageId !== 'string') {
+    return errorResponse(request, 'Invalid messageId');
+  }
+  if (!encryptedAudio || typeof encryptedAudio !== 'string') {
+    return errorResponse(request, 'Missing encrypted audio');
+  }
+  if (encryptedAudio.length > MAX_VOICE_SIZE * 1.4) { // base64 overhead
+    return errorResponse(request, 'Audio too large', 413);
+  }
+  if (duration > MAX_VOICE_DURATION_SEC) {
+    return errorResponse(request, 'Audio too long');
+  }
+
+  // Rate limit check
+  const allowed = await checkAndIncrementRateLimit(env.SOLINK_KV, senderPubkey);
+  if (!allowed) {
+    return errorResponse(request, 'Rate limit exceeded', 429);
+  }
+
+  // R2 key: voice/{recipientPubkey}/{messageId}.enc
+  const r2Key = `${VOICE_PREFIX}${recipientPubkey}/${messageId}.enc`;
+
+  try {
+    await env.SOLINK_STORAGE.put(r2Key, encryptedAudio, {
+      customMetadata: {
+        senderPubkey,
+        recipientPubkey,
+        messageId,
+        duration: String(duration || 0),
+        mimeType: mimeType || 'audio/webm',
+        uploadedAt: Date.now().toString(),
+      }
+    });
+
+    console.log(`[Voice] Uploaded: ${r2Key}, size: ${encryptedAudio.length}`);
+    return jsonResponse(request, { 
+      success: true, 
+      voiceKey: r2Key,
+      size: encryptedAudio.length 
+    });
+  } catch (err) {
+    console.error('[Voice] Upload error:', err);
+    return errorResponse(request, 'Failed to upload voice', 500);
+  }
+}
+
+async function handleVoiceDownload(request, url, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const userPubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!userPubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  // Extract voice key from URL: /api/voice/{recipientPubkey}/{messageId}.enc
+  // or from query param: /api/voice?key=voice/xxx/yyy.enc
+  let voiceKey = url.searchParams.get('key');
+  if (!voiceKey) {
+    // Try to extract from path
+    const pathMatch = url.pathname.match(/^\/api\/voice\/(.+)$/);
+    if (pathMatch) {
+      voiceKey = `${VOICE_PREFIX}${pathMatch[1]}`;
+    }
+  }
+
+  if (!voiceKey || !voiceKey.startsWith(VOICE_PREFIX)) {
+    return errorResponse(request, 'Invalid voice key', 400);
+  }
+
+  try {
+    const object = await env.SOLINK_STORAGE.get(voiceKey);
+    if (!object) {
+      return errorResponse(request, 'Voice not found', 404);
+    }
+
+    const metadata = object.customMetadata || {};
+    
+    // Security: user can only download voices they sent OR received
+    const recipientFromKey = voiceKey.replace(VOICE_PREFIX, '').split('/')[0];
+    const senderPubkey = metadata.senderPubkey;
+    
+    if (recipientFromKey !== userPubkey && senderPubkey !== userPubkey) {
+      console.log(`[Voice] Access denied: user=${userPubkey}, recipient=${recipientFromKey}, sender=${senderPubkey}`);
+      return errorResponse(request, 'Access denied', 403);
+    }
+
+    const encryptedAudio = await object.text();
+
+    return jsonResponse(request, {
+      found: true,
+      encryptedAudio,
+      duration: parseInt(metadata.duration) || 0,
+      mimeType: metadata.mimeType || 'audio/webm',
+      senderPubkey: senderPubkey,
+    });
+  } catch (err) {
+    console.error('[Voice] Download error:', err);
+    return errorResponse(request, 'Failed to download voice', 500);
+  }
+}
+
+async function handleVoiceDelete(request, url, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const userPubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!userPubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  const body = await readJson(request);
+  const voiceKey = body?.voiceKey;
+
+  if (!voiceKey || !voiceKey.startsWith(VOICE_PREFIX)) {
+    return errorResponse(request, 'Invalid voice key', 400);
+  }
+
+  // Security: only recipient can delete
+  const keyParts = voiceKey.replace(VOICE_PREFIX, '').split('/');
+  const recipientFromKey = keyParts[0];
+  if (recipientFromKey !== userPubkey) {
+    return errorResponse(request, 'Access denied', 403);
+  }
+
+  try {
+    await env.SOLINK_STORAGE.delete(voiceKey);
+    console.log(`[Voice] Deleted: ${voiceKey}`);
+    return jsonResponse(request, { success: true });
+  } catch (err) {
+    console.error('[Voice] Delete error:', err);
+    return errorResponse(request, 'Failed to delete voice', 500);
   }
 }
 

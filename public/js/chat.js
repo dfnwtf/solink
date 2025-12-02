@@ -229,7 +229,11 @@ import {
   saveBackupToCloud,
   loadBackupFromCloud,
   deleteBackupFromCloud,
+  uploadVoiceMessage,
+  downloadVoiceMessage,
+  deleteVoiceMessage,
 } from "./api.js";
+import { VoiceRecorder, formatDuration, drawWaveform, createWaveformCanvas } from "./voice-recorder.js";
 import {
   upsertContact,
   getContact,
@@ -884,6 +888,10 @@ const state = {
     selectedTarget: null,
   },
   settings: loadSettingsFromStorage(),
+  // Voice recording state
+  voiceRecorder: null,
+  isRecordingVoice: false,
+  voiceRecordingDuration: 0,
 };
 
 const ui = {
@@ -1046,6 +1054,14 @@ function cacheDom() {
   ui.toast = document.querySelector("[data-role=\"toast\"]");
   ui.notificationAudio = document.querySelector("[data-role=\"notification-sound\"]");
   ui.closeChatButton = document.querySelector("[data-action=\"close-chat\"]");
+
+  // Voice recording elements
+  ui.voiceRecordBtn = document.querySelector(".composer__voice-btn");
+  ui.voiceRecordingPanel = document.querySelector(".voice-recording");
+  ui.voiceRecordingCancel = document.querySelector(".voice-recording__cancel");
+  ui.voiceRecordingSend = document.querySelector(".voice-recording__send");
+  ui.voiceRecordingTime = document.querySelector(".voice-recording__time");
+  ui.voiceRecordingWaveform = document.querySelector(".voice-recording__waveform");
 
   syncSettingsUI();
   updatePaymentControls();
@@ -2322,6 +2338,11 @@ function bindEvents() {
   });
 
   ui.closeChatButton?.addEventListener("click", handleCloseChat);
+
+  // Voice recording events
+  ui.voiceRecordBtn?.addEventListener("click", startVoiceRecording);
+  ui.voiceRecordingCancel?.addEventListener("click", cancelVoiceRecording);
+  ui.voiceRecordingSend?.addEventListener("click", stopVoiceRecording);
   
   // Mobile back button
   const mobileBackBtn = document.querySelector("[data-action=\"mobile-back\"]");
@@ -3265,6 +3286,333 @@ function decryptWithSecret(secretB64, ciphertextB64, nonceB64) {
   }
 }
 
+// ============================================
+// VOICE MESSAGE ENCRYPTION
+// ============================================
+
+/**
+ * Encrypt audio blob for voice message
+ * @param {Blob} audioBlob - Audio blob to encrypt
+ * @param {string} sessionSecret - Base64 session secret
+ * @returns {Promise<{encryptedAudio: string, nonce: string}>}
+ */
+async function encryptVoiceBlob(audioBlob, sessionSecret) {
+  if (!audioBlob || !sessionSecret) return null;
+  
+  try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioBytes = new Uint8Array(arrayBuffer);
+    const shared = base64ToBytes(sessionSecret);
+    const nonce = nacl.randomBytes(nacl.box.nonceLength);
+    const encrypted = nacl.box.after(audioBytes, nonce, shared);
+    
+    return {
+      encryptedAudio: bytesToBase64(encrypted),
+      nonce: bytesToBase64(nonce),
+    };
+  } catch (error) {
+    console.error('[Voice] Encryption error:', error);
+    return null;
+  }
+}
+
+/**
+ * Decrypt audio data
+ * @param {string} encryptedB64 - Base64 encrypted audio
+ * @param {string} nonceB64 - Base64 nonce
+ * @param {string} sessionSecret - Base64 session secret
+ * @param {string} mimeType - Audio MIME type
+ * @returns {Promise<Blob|null>}
+ */
+async function decryptVoiceData(encryptedB64, nonceB64, sessionSecret, mimeType = 'audio/webm') {
+  console.log('[Voice] decryptVoiceData called:', {
+    hasEncrypted: !!encryptedB64,
+    encryptedLen: encryptedB64?.length,
+    hasNonce: !!nonceB64,
+    nonceLen: nonceB64?.length,
+    hasSecret: !!sessionSecret,
+  });
+  
+  if (!encryptedB64 || !nonceB64 || !sessionSecret) {
+    console.warn('[Voice] Missing params for decryption');
+    return null;
+  }
+  
+  try {
+    const shared = base64ToBytes(sessionSecret);
+    const encrypted = base64ToBytes(encryptedB64);
+    const nonce = base64ToBytes(nonceB64);
+    
+    console.log('[Voice] Decryption params:', {
+      sharedLen: shared.length,
+      encryptedLen: encrypted.length,
+      nonceLen: nonce.length,
+    });
+    
+    const decrypted = nacl.box.open.after(encrypted, nonce, shared);
+    
+    if (!decrypted) {
+      console.warn('[Voice] nacl.box.open.after returned null - wrong key or corrupted data');
+      return null;
+    }
+    
+    console.log('[Voice] Decryption successful, size:', decrypted.length);
+    return new Blob([decrypted], { type: mimeType });
+  } catch (error) {
+    console.error('[Voice] Decryption error:', error);
+    return null;
+  }
+}
+
+/**
+ * Send voice message
+ * @param {Blob} audioBlob - Recorded audio blob
+ * @param {number} duration - Duration in seconds
+ * @param {string} mimeType - Audio MIME type
+ */
+async function handleSendVoice(audioBlob, duration, mimeType, waveform = null) {
+  if (!state.activeContactKey || state.activeContactKey === SCANNER_CONTACT_KEY) {
+    showToast('Select a chat first');
+    return;
+  }
+
+  const contactPubkey = state.activeContactKey;
+  const messageId = crypto.randomUUID();
+  const timestamp = Date.now();
+  
+  // Ensure waveform has data
+  const waveformData = waveform && waveform.length > 0 ? waveform : new Array(50).fill(0.3);
+
+  // Get encryption keys first
+  const keys = await ensureEncryptionKeys();
+  if (!keys) {
+    showToast('Cannot get encryption keys');
+    return;
+  }
+  
+  // Force fresh session secret with fresh remote key for encryption
+  await resetSessionSecret(contactPubkey);
+  const sessionSecret = await ensureSessionSecret(contactPubkey, { force: true, forceFreshKey: true });
+  if (!sessionSecret) {
+    showToast('Cannot encrypt voice message');
+    return;
+  }
+  
+  console.log('[Voice] Sending voice, myPubKey:', keys.publicKey?.slice(0, 20), 'to:', contactPubkey?.slice(0, 8), 'waveform bars:', waveformData?.length);
+
+  // Create optimistic local message
+  const localMessage = {
+    id: messageId,
+    contactKey: contactPubkey,
+    direction: 'out',
+    text: '',
+    timestamp,
+    status: 'sending',
+    meta: {
+      voice: {
+        duration,
+        mimeType,
+        waveform: waveformData,
+        loading: true,
+      }
+    }
+  };
+
+  // Add to state and render
+  await addMessage(localMessage);
+  appendMessageToState(contactPubkey, localMessage);
+  renderMessages(contactPubkey);
+
+  try {
+    // Encrypt audio
+    const encrypted = await encryptVoiceBlob(audioBlob, sessionSecret);
+    if (!encrypted) {
+      throw new Error('Failed to encrypt voice');
+    }
+
+    // Upload to R2
+    const uploadResult = await uploadVoiceMessage({
+      recipientPubkey: contactPubkey,
+      messageId,
+      encryptedAudio: encrypted.encryptedAudio,
+      duration,
+      mimeType,
+    });
+
+    if (!uploadResult?.voiceKey) {
+      throw new Error('Upload failed');
+    }
+
+    // Encrypt text indicator for session key sync (keys already obtained above)
+    const textEncrypted = encryptWithSecret(sessionSecret, '🎤 Voice message');
+
+    // Send message with voice metadata
+    await sendMessage({
+      to: contactPubkey,
+      text: '🎤 Voice message',
+      ciphertext: textEncrypted?.ciphertext || '',
+      nonce: textEncrypted?.nonce || '',
+      version: textEncrypted?.version || 1,
+      timestamp,
+      voiceKey: uploadResult.voiceKey,
+      voiceDuration: duration,
+      voiceNonce: encrypted.nonce,
+      voiceMimeType: mimeType,
+      voiceWaveform: JSON.stringify(waveformData), // Send waveform to recipient
+      senderEncryptionKey: keys.publicKey,
+    });
+
+    // Update message status
+    await setMessageStatus(messageId, 'sent');
+    
+    // Update meta with voiceKey (preserve waveform!)
+    await updateMessageMeta(messageId, {
+      voice: {
+        key: uploadResult.voiceKey,
+        duration,
+        mimeType,
+        waveform: waveformData, // Preserve waveform data
+        nonce: encrypted.nonce,
+        sessionSecret: sessionSecret, // Save for playback after reload
+        loading: false,
+      }
+    });
+
+    // Update state (preserve waveform and session secret)
+    const messages = state.messages.get(contactPubkey) || [];
+    const msgIndex = messages.findIndex(m => m.id === messageId);
+    if (msgIndex !== -1) {
+      messages[msgIndex].status = 'sent';
+      messages[msgIndex].meta.voice.key = uploadResult.voiceKey;
+      messages[msgIndex].meta.voice.nonce = encrypted.nonce;
+      messages[msgIndex].meta.voice.waveform = waveformData;
+      messages[msgIndex].meta.voice.sessionSecret = sessionSecret;
+      messages[msgIndex].meta.voice.loading = false;
+    }
+    
+    renderMessages(contactPubkey);
+    updateContactPreviewFromMessage(contactPubkey, { ...localMessage, text: '🎤 Voice' });
+    scheduleChatSync(contactPubkey);
+
+    console.log('[Voice] Sent successfully:', uploadResult.voiceKey);
+  } catch (error) {
+    console.error('[Voice] Send error:', error);
+    await setMessageStatus(messageId, 'failed');
+    
+    const messages = state.messages.get(contactPubkey) || [];
+    const msgIndex = messages.findIndex(m => m.id === messageId);
+    if (msgIndex !== -1) {
+      messages[msgIndex].status = 'failed';
+    }
+    
+    renderMessages(contactPubkey);
+    showToast(error.message || 'Failed to send voice message');
+  }
+}
+
+// ============================================
+// VOICE RECORDING UI
+// ============================================
+
+function initVoiceRecorder() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    console.warn('[Voice] MediaDevices API not supported');
+    if (ui.voiceRecordBtn) ui.voiceRecordBtn.style.display = 'none';
+    return;
+  }
+  
+  state.voiceRecorder = new VoiceRecorder();
+  state.recordingWaveformBars = []; // Store waveform during recording
+  
+  state.voiceRecorder.onStart = () => {
+    state.isRecordingVoice = true;
+    state.recordingWaveformBars = [];
+    showVoiceRecordingUI();
+  };
+  
+  state.voiceRecorder.onStop = ({ blob, duration, mimeType, waveform }) => {
+    state.isRecordingVoice = false;
+    hideVoiceRecordingUI();
+    
+    if (blob && duration > 0) {
+      handleSendVoice(blob, duration, mimeType, waveform);
+    }
+  };
+  
+  state.voiceRecorder.onError = (error) => {
+    state.isRecordingVoice = false;
+    hideVoiceRecordingUI();
+    showToast(error.message || 'Recording failed');
+  };
+  
+  state.voiceRecorder.onDurationUpdate = (seconds) => {
+    state.voiceRecordingDuration = seconds;
+    if (ui.voiceRecordingTime) {
+      ui.voiceRecordingTime.textContent = formatDuration(seconds);
+    }
+  };
+  
+  state.voiceRecorder.onWaveformUpdate = (level, allData) => {
+    state.recordingWaveformBars = allData;
+    // Draw real-time waveform during recording
+    if (ui.voiceRecordingWaveform) {
+      const bars = allData.slice(-50); // Show last 50 samples
+      while (bars.length < 50) bars.unshift(0.1); // Pad with minimum
+      drawWaveform(ui.voiceRecordingWaveform, bars, 1, '#ff6b6b', 'rgba(255,255,255,0.2)');
+    }
+  };
+}
+
+function showVoiceRecordingUI() {
+  if (ui.voiceRecordingPanel) {
+    ui.voiceRecordingPanel.hidden = false;
+  }
+  document.querySelector('.composer')?.classList.add('composer--recording');
+}
+
+function hideVoiceRecordingUI() {
+  if (ui.voiceRecordingPanel) {
+    ui.voiceRecordingPanel.hidden = true;
+  }
+  if (ui.voiceRecordingTime) {
+    ui.voiceRecordingTime.textContent = '0:00';
+  }
+  document.querySelector('.composer')?.classList.remove('composer--recording');
+}
+
+async function startVoiceRecording() {
+  if (state.isRecordingVoice) return;
+  
+  if (!state.activeContactKey || state.activeContactKey === SCANNER_CONTACT_KEY) {
+    showToast('Select a chat first');
+    return;
+  }
+
+  if (!state.voiceRecorder) {
+    showToast('Voice recording not available');
+    return;
+  }
+  
+  console.log('[Voice] Starting recording...');
+  const started = await state.voiceRecorder.start();
+  if (!started) {
+    console.warn('[Voice] Failed to start recording');
+    // Ensure UI is hidden if start failed
+    state.isRecordingVoice = false;
+    hideVoiceRecordingUI();
+  }
+}
+
+function stopVoiceRecording() {
+  state.voiceRecorder?.stop();
+}
+
+function cancelVoiceRecording() {
+  state.voiceRecorder?.cancel();
+  state.isRecordingVoice = false;
+  hideVoiceRecordingUI();
+}
+
 function rememberRemoteEncryptionKey(pubkey, key) {
   if (!pubkey || !key) return;
   state.remoteEncryptionKeys.set(pubkey, key);
@@ -3285,9 +3633,9 @@ async function fetchRemoteEncryptionKey(pubkey) {
   return "";
 }
 
-async function ensureRemoteEncryptionKey(pubkey) {
+async function ensureRemoteEncryptionKey(pubkey, forceFetch = false) {
   if (!pubkey) return "";
-  if (state.remoteEncryptionKeys.has(pubkey)) {
+  if (!forceFetch && state.remoteEncryptionKeys.has(pubkey)) {
     return state.remoteEncryptionKeys.get(pubkey) || "";
   }
   const fetched = await fetchRemoteEncryptionKey(pubkey);
@@ -3297,6 +3645,7 @@ async function ensureRemoteEncryptionKey(pubkey) {
 async function ensureSessionSecret(pubkey, options = {}) {
   if (!pubkey) return null;
   const force = Boolean(options.force);
+  const forceFreshKey = Boolean(options.forceFreshKey); // Force fetch fresh key from server
   if (!force && state.sessionSecrets.has(pubkey)) {
     return state.sessionSecrets.get(pubkey);
   }
@@ -3311,11 +3660,16 @@ async function ensureSessionSecret(pubkey, options = {}) {
   if (hintKey) {
     rememberRemoteEncryptionKey(pubkey, hintKey);
   }
-  const remoteKey = hintKey || (await ensureRemoteEncryptionKey(pubkey));
+  const remoteKey = hintKey || (await ensureRemoteEncryptionKey(pubkey, forceFreshKey));
   if (!remoteKey) {
+    console.warn('[Session] No remote key for', pubkey?.slice(0, 8));
     return null;
   }
   const keys = await ensureEncryptionKeys();
+  console.log('[Session] Creating secret for', pubkey?.slice(0, 8), {
+    myPubKey: keys.publicKey?.slice(0, 20),
+    remotePubKey: remoteKey?.slice(0, 20),
+  });
   const secretKeyBytes = base64ToBytes(keys.secretKey);
   const remoteKeyBytes = base64ToBytes(remoteKey);
   try {
@@ -3323,6 +3677,7 @@ async function ensureSessionSecret(pubkey, options = {}) {
     const encoded = bytesToBase64(shared);
     state.sessionSecrets.set(pubkey, encoded);
     await saveSessionSecret(pubkey, encoded);
+    console.log('[Session] Secret created:', encoded?.slice(0, 20));
     return encoded;
   } catch (error) {
     console.warn("Failed to derive session secret", error);
@@ -3891,6 +4246,12 @@ function createMessageBubble(message, highlightQueryText) {
     return reportBubble;
   }
 
+  // Check for voice message
+  if (message.meta?.voice) {
+    console.log('[Voice] Rendering voice bubble:', message.id, message.meta.voice);
+    return createVoiceBubble(message);
+  }
+
   const bubble = document.createElement("div");
   bubble.className = `bubble bubble--${message.direction === "out" ? "out" : "in"}`;
   bubble.dataset.messageId = message.id;
@@ -3963,6 +4324,285 @@ function createMessageBubble(message, highlightQueryText) {
   // Add reaction button (hidden by default, shown on hover)
   const reactionBtn = createReactionButton(message.id);
   bubble.appendChild(reactionBtn);
+  
+  return bubble;
+}
+
+/**
+ * Create voice message bubble with custom player
+ */
+function createVoiceBubble(message) {
+  const voice = message.meta.voice;
+  const bubble = document.createElement('div');
+  bubble.className = `bubble bubble--${message.direction === 'out' ? 'out' : 'in'} bubble--voice`;
+  bubble.dataset.messageId = message.id;
+
+  // Voice player container
+  const player = document.createElement('div');
+  player.className = 'voice-player';
+
+  // Play/pause button
+  const playBtn = document.createElement('button');
+  playBtn.className = 'voice-player__btn';
+  playBtn.type = 'button';
+  playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  playBtn.dataset.state = 'paused';
+
+  // Waveform canvas (replaces progress bar)
+  const waveformCanvas = document.createElement('canvas');
+  waveformCanvas.className = 'voice-player__waveform';
+  waveformCanvas.width = 150;
+  waveformCanvas.height = 28;
+  
+  // Get waveform data or generate default
+  const waveformBars = voice.waveform && voice.waveform.length > 0 
+    ? voice.waveform 
+    : new Array(50).fill(0.3);
+  
+  // Initial draw
+  const isOutgoing = message.direction === 'out';
+  const playedColor = isOutgoing ? '#fff' : '#d4782a';
+  const unplayedColor = isOutgoing ? 'rgba(255,255,255,0.4)' : 'rgba(212,120,42,0.3)';
+  drawWaveform(waveformCanvas, waveformBars, 0, playedColor, unplayedColor);
+
+  // Duration label
+  const durationLabel = document.createElement('span');
+  durationLabel.className = 'voice-player__duration';
+  durationLabel.textContent = formatDuration(voice.duration || 0);
+
+  // Loading indicator
+  if (voice.loading) {
+    playBtn.disabled = true;
+    playBtn.innerHTML = '<svg class="voice-player__spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>';
+  }
+
+  // Audio element (lazy loaded on play)
+  let audioElement = null;
+  let audioUrl = null;
+  let audioBlob = null; // Store blob for Chrome recreation
+
+  playBtn.addEventListener('click', async () => {
+    if (voice.loading) return;
+    
+    // Load audio if not loaded
+    if (!audioElement) {
+      playBtn.disabled = true;
+      playBtn.innerHTML = '<svg class="voice-player__spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>';
+      
+      try {
+        // Download and decrypt
+        const result = await downloadVoiceMessage(voice.key);
+        if (!result?.encryptedAudio) {
+          throw new Error('Voice not found');
+        }
+        
+        console.log('[Voice] Decrypting voice for contact:', message.contactKey?.slice(0, 8), 'nonce:', voice.nonce?.slice(0, 20), 'senderKey:', voice.senderKey?.slice(0, 20), 'hasSavedSecret:', !!voice.sessionSecret);
+        
+        let sessionSecret;
+        
+        // Priority 1: Use saved session secret (for outgoing messages after reload)
+        if (voice.sessionSecret) {
+          sessionSecret = voice.sessionSecret;
+          console.log('[Voice] Using saved session secret');
+        }
+        // Priority 2: For incoming, compute from senderKey
+        else if (voice.senderKey && message.direction === 'in') {
+          const myKeys = await ensureEncryptionKeys();
+          const senderKeyBytes = base64ToBytes(voice.senderKey);
+          const sharedBytes = nacl.box.before(senderKeyBytes, base64ToBytes(myKeys.secretKey));
+          sessionSecret = bytesToBase64(sharedBytes);
+          console.log('[Voice] Direct session secret computed, myPubKey:', myKeys.publicKey?.slice(0, 20));
+        }
+        // Priority 3: Standard session secret
+        else {
+          sessionSecret = await ensureSessionSecret(message.contactKey, { force: true });
+          console.log('[Voice] Using standard session secret');
+        }
+        
+        console.log('[Voice] Session secret obtained:', !!sessionSecret, sessionSecret?.slice(0, 20));
+        
+        if (!sessionSecret) {
+          throw new Error('No session secret available');
+        }
+        
+        console.log('[Voice] Decrypting with mimeType:', voice.mimeType);
+        let blob = await decryptVoiceData(
+          result.encryptedAudio,
+          voice.nonce,
+          sessionSecret,
+          voice.mimeType || 'audio/webm'
+        );
+        
+        if (!blob) {
+          throw new Error('Failed to decrypt');
+        }
+        
+        // Save session secret for future playback (after reload)
+        if (!voice.sessionSecret && sessionSecret) {
+          voice.sessionSecret = sessionSecret;
+          // Persist to IndexedDB
+          updateMessageMeta(message.id, { voice: { ...voice, sessionSecret } }).catch(() => {});
+        }
+        
+        // Use blob URL for audio playback
+        audioBlob = blob; // Store for Chrome recreation
+        audioUrl = URL.createObjectURL(blob);
+        console.log('[Voice] Created blob URL:', audioUrl?.slice(0, 50), 'blob size:', blob.size, 'type:', blob.type);
+        
+        audioElement = new Audio(audioUrl);
+        
+        // Wait for audio to be ready
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            console.warn('[Voice] Audio load timeout');
+            resolve(); // Don't reject, try to play anyway
+          }, 5000);
+          
+          audioElement.oncanplaythrough = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+          audioElement.onloadeddata = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+          audioElement.onerror = (e) => {
+            clearTimeout(timeout);
+            console.error('[Voice] Audio element error:', audioElement.error);
+            reject(new Error('Audio load failed: ' + (audioElement.error?.message || 'unknown')));
+          };
+        });
+        
+        audioElement.addEventListener('timeupdate', () => {
+          const progress = audioElement.currentTime / audioElement.duration;
+          drawWaveform(waveformCanvas, waveformBars, progress, playedColor, unplayedColor);
+          durationLabel.textContent = formatDuration(Math.floor(audioElement.currentTime));
+        });
+        
+        audioElement.addEventListener('ended', () => {
+          playBtn.dataset.state = 'paused';
+          playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+          drawWaveform(waveformCanvas, waveformBars, 0, playedColor, unplayedColor);
+          durationLabel.textContent = formatDuration(voice.duration || 0);
+          
+          // Chrome has issues with seeking blob URLs after playback ends
+          // Mark as needing recreation on next play
+          audioElement.dataset.needsRecreate = 'true';
+        });
+        
+        audioElement.addEventListener('error', () => {
+          showToast('Failed to play voice message');
+        });
+        
+      } catch (err) {
+        console.error('[Voice] Load error:', err);
+        showToast('Failed to load voice message');
+        playBtn.disabled = false;
+        playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        return;
+      }
+      
+      playBtn.disabled = false;
+    }
+    
+    // Chrome: recreate audio element if needed (blob URL seek issues)
+    if (audioElement?.dataset?.needsRecreate === 'true' && audioBlob) {
+      console.log('[Voice] Recreating audio element for Chrome compatibility');
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      audioUrl = URL.createObjectURL(audioBlob);
+      const newAudio = new Audio(audioUrl);
+      
+      // Re-attach event listeners
+      newAudio.addEventListener('timeupdate', () => {
+        const progress = newAudio.currentTime / newAudio.duration;
+        drawWaveform(waveformCanvas, waveformBars, progress, playedColor, unplayedColor);
+        durationLabel.textContent = formatDuration(Math.floor(newAudio.currentTime));
+      });
+      newAudio.addEventListener('ended', () => {
+        playBtn.dataset.state = 'paused';
+        playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        drawWaveform(waveformCanvas, waveformBars, 0, playedColor, unplayedColor);
+        durationLabel.textContent = formatDuration(voice.duration || 0);
+        newAudio.dataset.needsRecreate = 'true';
+      });
+      newAudio.addEventListener('error', () => {
+        showToast('Failed to play voice message');
+      });
+      
+      audioElement = newAudio;
+    }
+    
+    // Toggle play/pause
+    if (playBtn.dataset.state === 'paused') {
+      // Pause any other playing audio
+      document.querySelectorAll('.voice-player__btn[data-state="playing"]').forEach(btn => {
+        if (btn !== playBtn) btn.click();
+      });
+      
+      console.log('[Voice] Playing, readyState:', audioElement.readyState, 'networkState:', audioElement.networkState);
+      
+      try {
+        await audioElement.play();
+        playBtn.dataset.state = 'playing';
+        playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+      } catch (err) {
+        // Ignore AbortError (play interrupted by pause)
+        if (err.name !== 'AbortError') {
+          console.warn('[Voice] Play error:', err.name, err.message);
+          // Try to reload audio
+          if (audioUrl) URL.revokeObjectURL(audioUrl);
+          audioElement = null;
+          audioUrl = null;
+          showToast('Playback failed, tap again to retry');
+        }
+      }
+    } else {
+      audioElement.pause();
+      playBtn.dataset.state = 'paused';
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    }
+  });
+
+  // Click on progress to seek
+  waveformCanvas.addEventListener('click', (e) => {
+    if (!audioElement || !isFinite(audioElement.duration) || audioElement.readyState < 2) return;
+    const rect = waveformCanvas.getBoundingClientRect();
+    const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    try {
+      audioElement.currentTime = percent * audioElement.duration;
+      drawWaveform(waveformCanvas, waveformBars, percent, playedColor, unplayedColor);
+    } catch (err) {
+      console.warn('[Voice] Seek error:', err);
+    }
+  });
+
+  player.appendChild(playBtn);
+  player.appendChild(waveformCanvas);
+  player.appendChild(durationLabel);
+  bubble.appendChild(player);
+
+  // Meta row: label left, time+status right
+  const meta = document.createElement('div');
+  meta.className = 'bubble__meta bubble__meta--voice';
+  
+  const label = document.createElement('span');
+  label.className = 'voice-player__label';
+  label.textContent = 'Voice message';
+  meta.appendChild(label);
+  
+  const timeWrap = document.createElement('span');
+  timeWrap.className = 'bubble__time-wrap';
+  timeWrap.textContent = formatTime(message.timestamp);
+  
+  if (message.direction === 'out') {
+    const status = document.createElement('span');
+    status.className = 'bubble__status';
+    status.textContent = message.status || 'sent';
+    timeWrap.appendChild(status);
+  }
+  meta.appendChild(timeWrap);
+  
+  bubble.appendChild(meta);
   
   return bubble;
 }
@@ -6203,6 +6843,15 @@ async function handleIncomingMessages(messages) {
   const ackIds = [];
 
   for (const payload of messages) {
+    // Debug: log incoming message payload
+    console.log('[Incoming] Message payload:', {
+      from: payload.from?.slice(0, 8),
+      text: payload.text?.slice(0, 30),
+      hasVoiceKey: !!payload.voiceKey,
+      voiceKey: payload.voiceKey?.slice(0, 30),
+      voiceDuration: payload.voiceDuration,
+    });
+    
     const from = normalizePubkey(payload.from);
     if (!from) continue;
 
@@ -6295,6 +6944,38 @@ async function handleIncomingMessages(messages) {
       }
     }
 
+    // Check for voice message
+    let voiceMeta = null;
+    if (payload.voiceKey) {
+      console.log('[Voice] Incoming voice message:', {
+        voiceKey: payload.voiceKey,
+        duration: payload.voiceDuration,
+        nonce: payload.voiceNonce,
+        hasWaveform: !!payload.voiceWaveform,
+        waveformLength: payload.voiceWaveform?.length,
+      });
+      // Parse waveform from JSON string
+      let waveform = null;
+      if (payload.voiceWaveform) {
+        try {
+          waveform = JSON.parse(payload.voiceWaveform);
+        } catch (e) {
+          console.warn('[Voice] Failed to parse waveform:', e);
+        }
+      }
+      
+      voiceMeta = {
+        key: payload.voiceKey,
+        duration: payload.voiceDuration || 0,
+        mimeType: payload.voiceMimeType || 'audio/webm',
+        nonce: payload.voiceNonce,
+        waveform: waveform, // Waveform from sender
+        senderKey: payload.senderEncryptionKey, // For decryption
+        loading: false,
+      };
+      displayText = '🎤 Voice message';
+    }
+
     // Check if this is a reaction message
     const reactionData = parseReactionMessage(displayText);
     if (reactionData) {
@@ -6350,6 +7031,11 @@ async function handleIncomingMessages(messages) {
         ...(payload.tokenPreview
           ? {
               tokenPreview: payload.tokenPreview,
+            }
+          : {}),
+        ...(voiceMeta
+          ? {
+              voice: voiceMeta,
             }
           : {}),
       },
@@ -7686,6 +8372,7 @@ async function initialize() {
   initMobileInfoSheet();
   initSmartScrollbar();
   initPushUI();
+  initVoiceRecorder();
   handleMessageInput();
   toggleComposer(false);
   registerDebugHelpers();
