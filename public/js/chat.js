@@ -5560,6 +5560,9 @@ async function handleExportData() {
     // Get raw data without signature
     const dump = await exportLocalData(currentWallet);
     
+    // Add localStorage settings (same as R2 backup)
+    dump.localStorageSettings = collectLocalStorageSettings();
+    
     // Create message to sign (text, not binary)
     const dataToSign = JSON.stringify({
       version: dump.version,
@@ -5717,8 +5720,42 @@ async function handleImportFileChange(event) {
       }
       
       await importLocalData(parsed, currentWallet);
+      
+      // Restore localStorage settings if present
+      if (parsed.localStorageSettings) {
+        restoreLocalStorageSettings(parsed.localStorageSettings);
+        console.log("[Import] Settings restored from backup");
+      }
+      
+      // Sync imported data to R2 immediately (before reload)
+      if (CLOUD_SYNC_ENABLED && getSessionToken() && state.currentWallet) {
+        showToast("Syncing to cloud...");
+        console.log("[Import] Syncing imported data to R2...");
+        try {
+          // Call performFullBackup directly (not debounced)
+          const exportData = await exportLocalData(state.currentWallet);
+          const localStorageSettings = collectLocalStorageSettings();
+          const backupData = {
+            version: 3,
+            syncedAt: Date.now(),
+            ownerWallet: state.currentWallet,
+            contacts: exportData.contacts || [],
+            messages: exportData.messages || [],
+            profile: exportData.profile || null,
+            localStorageSettings,
+          };
+          const encrypted = await encryptFullBackup(backupData);
+          if (encrypted) {
+            const result = await syncBackupToCloud(encrypted);
+            console.log("[Import] R2 sync completed:", result);
+          }
+        } catch (syncErr) {
+          console.warn("[Import] R2 sync failed:", syncErr.message);
+        }
+      }
+      
       showToast("Backup imported");
-      setTimeout(() => window.location.reload(), 400);
+      setTimeout(() => window.location.reload(), 500);
     } catch (error) {
       console.error("Import failed", error);
       if (error.message === "WALLET_MISMATCH") {
