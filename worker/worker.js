@@ -2,6 +2,7 @@ import { verifyEd25519Signature, generateToken } from './utils/crypto';
 import { issueNonce, consumeNonce, isNonceValid } from './utils/nonce';
 import { checkAndIncrementRateLimit } from './utils/ratelimit';
 import { InboxDurable, INBOX_DELIVERY_TTL_MS, MAX_BATCH } from './inbox-do';
+import { logEvent, Category, EventType } from './utils/logger';
 
 const SESSION_PREFIX = 'session:';
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60; // 1 hour default
@@ -203,6 +204,8 @@ function wsEndpoint(env) {
 }
 
 async function handleSolanaProxy(request, env) {
+  const startTime = Date.now();
+  
   if (request.method !== 'POST') {
     return errorResponse(request, 'Method Not Allowed', 405);
   }
@@ -210,9 +213,15 @@ async function handleSolanaProxy(request, env) {
   const endpoints = httpEndpoints(env);
 
   let body;
+  let rpcMethod = 'unknown';
 
   try {
     body = await request.text();
+    // Try to extract RPC method name
+    try {
+      const parsed = JSON.parse(body);
+      rpcMethod = parsed.method || 'unknown';
+    } catch {}
   } catch {
     return errorResponse(request, 'Invalid request body', 400);
   }
@@ -240,6 +249,8 @@ async function handleSolanaProxy(request, env) {
             'application/json;charset=UTF-8',
         };
 
+        logEvent(env, { type: EventType.INFO, category: Category.SOLANA, action: rpcMethod, status: 200, latency: Date.now() - startTime });
+        
         return new Response(upstream.body, {
           status: upstream.status,
           headers,
@@ -256,6 +267,7 @@ async function handleSolanaProxy(request, env) {
   }
 
   console.error('Solana RPC proxy failed:', lastError);
+  logEvent(env, { type: EventType.ERROR, category: Category.SOLANA, action: rpcMethod, details: 'all endpoints failed', status: 502, latency: Date.now() - startTime });
   return errorResponse(request, `Solana RPC proxy failed: ${lastError}`, 502);
 }
 
@@ -426,6 +438,13 @@ export default {
         return handleVoiceDelete(request, url, env);
       case '/api/voice':
         return handleVoiceDownload(request, url, env);
+      // Dev Console API
+      case '/api/dev/login':
+        return handleDevLogin(request, env);
+      case '/api/dev/stats':
+        return handleDevStats(request, env);
+      case '/api/dev/events':
+        return handleDevEvents(request, url, env);
       default:
         // Handle dynamic routes like /api/sync/chat/:contactKey
         if (url.pathname.startsWith('/api/sync/chat/')) {
@@ -455,27 +474,33 @@ async function handleNonceRequest(request, url, env) {
 }
 
 async function handleVerifyRequest(request, env) {
+  const startTime = Date.now();
+  
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
   }
 
   const body = await readJson(request);
   if (!body) {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'verify', details: 'invalid json', status: 400 });
     return errorResponse(request, 'Invalid JSON payload');
   }
 
   const { pubkey, nonce, signature, sessionTtl } = body;
   if (!pubkey || !nonce || !signature) {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'verify', details: 'missing fields', status: 400 });
     return errorResponse(request, 'Missing fields');
   }
 
   const nonceRecord = await consumeNonce(env.SOLINK_KV, pubkey);
   if (!isNonceValid(nonceRecord, nonce)) {
+    logEvent(env, { type: EventType.WARN, category: Category.AUTH, action: 'verify', wallet: pubkey, details: 'invalid nonce', status: 401 });
     return errorResponse(request, 'Invalid or expired nonce', 401);
   }
 
   const isValidSignature = await verifyEd25519Signature(nonce, signature, pubkey);
   if (!isValidSignature) {
+    logEvent(env, { type: EventType.WARN, category: Category.AUTH, action: 'verify', wallet: pubkey, details: 'invalid signature', status: 401 });
     return errorResponse(request, 'Invalid signature', 401);
   }
 
@@ -485,6 +510,9 @@ async function handleVerifyRequest(request, env) {
     : DEFAULT_SESSION_TTL_SECONDS;
   
   const token = await createSession(env.SOLINK_KV, pubkey, ttlSeconds);
+  
+  logEvent(env, { type: EventType.INFO, category: Category.AUTH, action: 'verify', wallet: pubkey, latency: Date.now() - startTime, status: 200 });
+  
   return jsonResponse(request, {
     token,
     user: { pubkey },
@@ -492,6 +520,8 @@ async function handleVerifyRequest(request, env) {
 }
 
 async function handleSendMessage(request, env) {
+  const startTime = Date.now();
+  
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
   }
@@ -499,30 +529,36 @@ async function handleSendMessage(request, env) {
   const token = extractBearerToken(request);
   const senderPubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!senderPubkey) {
+    logEvent(env, { type: EventType.WARN, category: Category.MESSAGE, action: 'send', details: 'unauthorized', status: 401 });
     return errorResponse(request, 'Unauthorized', 401);
   }
 
   const body = await readJson(request);
   if (!body) {
+    logEvent(env, { type: EventType.ERROR, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: 'invalid json', status: 400 });
     return errorResponse(request, 'Invalid JSON payload');
   }
 
   const { to, text, timestamp, ciphertext, nonce, version, tokenPreview, senderEncryptionKey: clientSenderKey, voiceKey, voiceDuration, voiceNonce, voiceMimeType, voiceWaveform } = body;
   if (!to || (!text && !ciphertext && !voiceKey)) {
+    logEvent(env, { type: EventType.ERROR, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: 'missing fields', status: 400 });
     return errorResponse(request, 'Missing fields');
   }
 
   const recipientPubkey = normalizePubkey(to);
   if (!recipientPubkey || !isValidPubkey(recipientPubkey)) {
+    logEvent(env, { type: EventType.ERROR, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: 'invalid recipient', status: 400 });
     return errorResponse(request, 'Invalid recipient', 400);
   }
 
   if (recipientPubkey === senderPubkey) {
+    logEvent(env, { type: EventType.WARN, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: 'self-send attempt', status: 400 });
     return errorResponse(request, 'Cannot send messages to yourself');
   }
 
   const allowed = await checkAndIncrementRateLimit(env.SOLINK_KV, senderPubkey);
   if (!allowed) {
+    logEvent(env, { type: EventType.WARN, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: 'rate limited', status: 429 });
     return errorResponse(request, 'Rate limit exceeded', 429);
   }
 
@@ -617,8 +653,13 @@ async function handleSendMessage(request, env) {
     
   } catch (error) {
     console.error('Inbox store error', error);
+    logEvent(env, { type: EventType.ERROR, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: error.message, status: 500, latency: Date.now() - startTime });
     return errorResponse(request, error.message || 'Failed to enqueue message', 500);
   }
+  
+  const msgType = voiceKey ? 'voice' : (ciphertext ? 'encrypted' : 'text');
+  logEvent(env, { type: EventType.INFO, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: msgType, status: 200, latency: Date.now() - startTime });
+  
   return jsonResponse(request, { ok: true, messageId: message.id });
 }
 
@@ -628,6 +669,8 @@ function shortenPubkey(pubkey) {
 }
 
 async function handleInboxPoll(request, env) {
+  const startTime = Date.now();
+  
   if (request.method !== 'GET') {
     return new Response('Method Not Allowed', { status: 405 });
   }
@@ -651,6 +694,7 @@ async function handleInboxPoll(request, env) {
       messages = await inboxPull(env, pubkey, INBOX_PULL_LIMIT);
     } catch (error) {
       console.error('Inbox pull error', error);
+      logEvent(env, { type: EventType.ERROR, category: Category.MESSAGE, action: 'poll', wallet: pubkey, details: error.message, status: 500 });
       return errorResponse(request, error.message || 'Inbox fetch failed', 500);
     }
     if (messages.length || waitMs === 0 || Date.now() - start >= waitMs) {
@@ -659,6 +703,12 @@ async function handleInboxPoll(request, env) {
         from: normalizePubkey(message.from) || message.from,
         to: normalizePubkey(message.to) || pubkey,
       }));
+      
+      // Only log if messages received (to reduce noise)
+      if (messages.length > 0) {
+        logEvent(env, { type: EventType.INFO, category: Category.MESSAGE, action: 'poll', wallet: pubkey, details: `${messages.length} msgs`, status: 200, latency: Date.now() - startTime });
+      }
+      
       return jsonResponse(request, { messages: normalizedMessages });
     }
     const elapsed = Date.now() - start;
@@ -704,6 +754,8 @@ async function handleProfileMe(request, env) {
 }
 
 async function handleNicknameUpdate(request, env) {
+  const startTime = Date.now();
+  
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
   }
@@ -711,6 +763,7 @@ async function handleNicknameUpdate(request, env) {
   const token = extractBearerToken(request);
   const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!pubkey) {
+    logEvent(env, { type: EventType.WARN, category: Category.PROFILE, action: 'nickname', details: 'unauthorized', status: 401 });
     return errorResponse(request, 'Unauthorized', 401);
   }
 
@@ -764,6 +817,8 @@ async function handleNicknameUpdate(request, env) {
   await env.SOLINK_KV.put(profileKey(pubkey), JSON.stringify(profile));
   await env.SOLINK_KV.put(nicknameKey(normalized), pubkey);
 
+  logEvent(env, { type: EventType.INFO, category: Category.PROFILE, action: 'nickname', wallet: pubkey, details: `@${normalized}`, status: 200, latency: Date.now() - startTime });
+  
   return jsonResponse(request, { profile: sanitizeProfile(profile) });
 }
 
@@ -1479,6 +1534,7 @@ const VAPID_PUBLIC_KEY = 'BJoy9eenwraBkfPbPYcMTRV_Rw6z2uYfIPrGgkukwJI06A8zD_tPBe
 const VAPID_SUBJECT = 'mailto:support@solink.chat';
 
 async function handlePushSubscribe(request, env) {
+  const startTime = Date.now();
   console.log('[Push] handlePushSubscribe called');
   
   if (request.method !== 'POST') {
@@ -1490,6 +1546,7 @@ async function handlePushSubscribe(request, env) {
   
   if (!body || !body.pubkey || !body.subscription) {
     console.log('[Push] Missing pubkey or subscription');
+    logEvent(env, { type: EventType.ERROR, category: Category.PUSH, action: 'subscribe', details: 'missing fields', status: 400 });
     return errorResponse(request, 'Missing pubkey or subscription');
   }
 
@@ -1529,9 +1586,11 @@ async function handlePushSubscribe(request, env) {
     });
 
     console.log(`[Push] Subscription saved for ${pubkey}, total: ${existing.length}`);
+    logEvent(env, { type: EventType.INFO, category: Category.PUSH, action: 'subscribe', wallet: pubkey, details: `${existing.length} devices`, status: 200, latency: Date.now() - startTime });
     return jsonResponse(request, { success: true });
   } catch (error) {
     console.error('[Push] Subscribe error:', error.message || error);
+    logEvent(env, { type: EventType.ERROR, category: Category.PUSH, action: 'subscribe', wallet: pubkey, details: error.message, status: 500 });
     return errorResponse(request, 'Failed to save subscription', 500);
   }
 }
@@ -2027,9 +2086,11 @@ async function handleSyncBackup(request, env) {
       });
 
       console.log(`[Backup] Saved full backup for ${walletAddress}, size: ${dataSize} bytes`);
+      logEvent(env, { type: EventType.INFO, category: Category.SYNC, action: 'backup_save', wallet: walletAddress, details: `${Math.round(dataSize / 1024)}KB`, status: 200 });
       return jsonResponse(request, { success: true, size: dataSize });
     } catch (err) {
       console.error('[Backup] Save error:', err);
+      logEvent(env, { type: EventType.ERROR, category: Category.SYNC, action: 'backup_save', wallet: walletAddress, details: err.message, status: 500 });
       return errorResponse(request, 'Failed to save backup', 500);
     }
 
@@ -2080,6 +2141,8 @@ async function handleSyncBackup(request, env) {
 // ============================================
 
 async function handleVoiceUpload(request, env) {
+  const startTime = Date.now();
+  
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
   }
@@ -2087,6 +2150,7 @@ async function handleVoiceUpload(request, env) {
   const token = extractBearerToken(request);
   const senderPubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!senderPubkey) {
+    logEvent(env, { type: EventType.WARN, category: Category.VOICE, action: 'upload', details: 'unauthorized', status: 401 });
     return errorResponse(request, 'Unauthorized', 401);
   }
 
@@ -2108,9 +2172,11 @@ async function handleVoiceUpload(request, env) {
     return errorResponse(request, 'Missing encrypted audio');
   }
   if (encryptedAudio.length > MAX_VOICE_SIZE * 1.4) { // base64 overhead
+    logEvent(env, { type: EventType.WARN, category: Category.VOICE, action: 'upload', wallet: senderPubkey, details: 'too large', status: 413 });
     return errorResponse(request, 'Audio too large', 413);
   }
   if (duration > MAX_VOICE_DURATION_SEC) {
+    logEvent(env, { type: EventType.WARN, category: Category.VOICE, action: 'upload', wallet: senderPubkey, details: 'too long', status: 400 });
     return errorResponse(request, 'Audio too long');
   }
 
@@ -2136,6 +2202,7 @@ async function handleVoiceUpload(request, env) {
     });
 
     console.log(`[Voice] Uploaded: ${r2Key}, size: ${encryptedAudio.length}`);
+    logEvent(env, { type: EventType.INFO, category: Category.VOICE, action: 'upload', wallet: senderPubkey, details: `${Math.round(encryptedAudio.length / 1024)}KB`, status: 200, latency: Date.now() - startTime });
     return jsonResponse(request, { 
       success: true, 
       voiceKey: r2Key,
@@ -2143,6 +2210,7 @@ async function handleVoiceUpload(request, env) {
     });
   } catch (err) {
     console.error('[Voice] Upload error:', err);
+    logEvent(env, { type: EventType.ERROR, category: Category.VOICE, action: 'upload', wallet: senderPubkey, details: err.message, status: 500 });
     return errorResponse(request, 'Failed to upload voice', 500);
   }
 }
@@ -2238,6 +2306,166 @@ async function handleVoiceDelete(request, url, env) {
     console.error('[Voice] Delete error:', err);
     return errorResponse(request, 'Failed to delete voice', 500);
   }
+}
+
+// ============================================
+// DEV CONSOLE API
+// ============================================
+
+const DEV_TOKEN_PREFIX = 'dev_token:';
+const DEV_LOG_KEY = 'dev_logs';
+const DEV_TOKEN_TTL = 24 * 60 * 60; // 24 hours
+const MAX_DEV_LOGS = 500;
+
+async function handleDevLogin(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const body = await readJson(request);
+  if (!body || !body.password) {
+    return errorResponse(request, 'Missing password', 400);
+  }
+
+  const correctPassword = env.DEV_PASSWORD || 'solink-dev-2024';
+  
+  if (body.password !== correctPassword) {
+    logEvent(env, { type: EventType.WARN, category: Category.SYSTEM, action: 'dev_login', details: 'wrong password', status: 401 });
+    return errorResponse(request, 'Invalid password', 401);
+  }
+
+  // Generate dev token
+  const token = generateToken(32);
+  await env.SOLINK_KV.put(`${DEV_TOKEN_PREFIX}${token}`, 'valid', {
+    expirationTtl: DEV_TOKEN_TTL,
+  });
+
+  logEvent(env, { type: EventType.INFO, category: Category.SYSTEM, action: 'dev_login', details: 'success', status: 200 });
+  
+  return jsonResponse(request, { token, expiresIn: DEV_TOKEN_TTL });
+}
+
+async function verifyDevToken(env, request) {
+  const token = extractBearerToken(request);
+  if (!token) return false;
+  
+  const valid = await env.SOLINK_KV.get(`${DEV_TOKEN_PREFIX}${token}`);
+  return valid === 'valid';
+}
+
+async function handleDevStats(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  if (!await verifyDevToken(env, request)) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  // Get logs from KV
+  const logsData = await env.SOLINK_KV.get(DEV_LOG_KEY, 'json') || [];
+  const url = new URL(request.url);
+  const period = url.searchParams.get('period') || '1h';
+  
+  // Calculate time filter
+  const periodMs = {
+    '5m': 5 * 60 * 1000,
+    '15m': 15 * 60 * 1000,
+    '1h': 60 * 60 * 1000,
+    '6h': 6 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+  };
+  
+  const cutoff = Date.now() - (periodMs[period] || periodMs['1h']);
+  const filteredLogs = logsData.filter(log => log.timestamp > cutoff);
+  
+  // Calculate stats
+  const total = filteredLogs.length;
+  const errors = filteredLogs.filter(l => l.type === 'error').length;
+  const warnings = filteredLogs.filter(l => l.type === 'warn').length;
+  const avgLatency = total > 0 
+    ? Math.round(filteredLogs.reduce((sum, l) => sum + (l.latency || 0), 0) / total)
+    : 0;
+  
+  // Category breakdown
+  const categories = {};
+  filteredLogs.forEach(log => {
+    categories[log.category] = (categories[log.category] || 0) + 1;
+  });
+  
+  // Unique wallets
+  const uniqueWallets = new Set(filteredLogs.filter(l => l.wallet && l.wallet !== '-').map(l => l.wallet)).size;
+
+  return jsonResponse(request, {
+    period,
+    stats: {
+      total,
+      errors,
+      warnings,
+      avgLatency,
+      uniqueWallets,
+    },
+    categories,
+  });
+}
+
+async function handleDevEvents(request, url, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  if (!await verifyDevToken(env, request)) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  // Get logs from KV
+  const logsData = await env.SOLINK_KV.get(DEV_LOG_KEY, 'json') || [];
+  
+  // Parse filters
+  const period = url.searchParams.get('period') || '1h';
+  const type = url.searchParams.get('type') || null;
+  const category = url.searchParams.get('category') || null;
+  const search = url.searchParams.get('search') || null;
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '100'), 500);
+  const offset = parseInt(url.searchParams.get('offset') || '0');
+  
+  // Calculate time filter
+  const periodMs = {
+    '5m': 5 * 60 * 1000,
+    '15m': 15 * 60 * 1000,
+    '1h': 60 * 60 * 1000,
+    '6h': 6 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+  };
+  
+  const cutoff = Date.now() - (periodMs[period] || periodMs['1h']);
+  
+  // Apply filters
+  let filtered = logsData.filter(log => {
+    if (log.timestamp < cutoff) return false;
+    if (type && log.type !== type) return false;
+    if (category && log.category !== category) return false;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      const searchable = `${log.action} ${log.wallet} ${log.details}`.toLowerCase();
+      if (!searchable.includes(searchLower)) return false;
+    }
+    return true;
+  });
+  
+  // Sort by timestamp descending
+  filtered.sort((a, b) => b.timestamp - a.timestamp);
+  
+  const total = filtered.length;
+  const events = filtered.slice(offset, offset + limit);
+
+  return jsonResponse(request, {
+    events,
+    total,
+    limit,
+    offset,
+    hasMore: offset + limit < total,
+  });
 }
 
 export { InboxDurable };
