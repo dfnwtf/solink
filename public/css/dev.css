@@ -659,6 +659,65 @@ body {
 }
 
 /* ===================================
+   CHARTS SECTION
+   =================================== */
+
+.charts-section {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: var(--space-lg);
+  padding: 0 var(--space-xl) var(--space-lg);
+  background: var(--bg-primary);
+}
+
+.chart-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-card--wide {
+  grid-column: 1;
+}
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-md);
+}
+
+.chart-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.chart-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chart-container {
+  position: relative;
+  height: 180px;
+  width: 100%;
+}
+
+.chart-container--small {
+  height: 160px;
+}
+
+/* Chart.js custom styling */
+.chart-card canvas {
+  max-height: 100%;
+}
+
+/* ===================================
    RESPONSIVE
    =================================== */
 
@@ -666,11 +725,27 @@ body {
   .stats-bar {
     grid-template-columns: repeat(3, 1fr);
   }
+  
+  .charts-section {
+    grid-template-columns: 1fr 1fr;
+  }
+  
+  .chart-card--wide {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 900px) {
   .stats-bar {
     grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .charts-section {
+    grid-template-columns: 1fr;
+  }
+  
+  .chart-card--wide {
+    grid-column: 1;
   }
   
   .filters-bar {

@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/dev.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <!-- Login Screen -->
@@ -88,6 +89,35 @@
       <div class="stat-card">
         <div class="stat-value" id="stat-wallets">0</div>
         <div class="stat-label">Unique Wallets</div>
+      </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="charts-section">
+      <div class="chart-card chart-card--wide">
+        <div class="chart-header">
+          <h3>Requests Over Time</h3>
+          <span class="chart-subtitle" id="chart-timeline-subtitle">Last hour</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-timeline"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>By Category</h3>
+        </div>
+        <div class="chart-container chart-container--small">
+          <canvas id="chart-categories"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>By Status</h3>
+        </div>
+        <div class="chart-container chart-container--small">
+          <canvas id="chart-status"></canvas>
+        </div>
       </div>
     </div>
 
