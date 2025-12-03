@@ -593,16 +593,16 @@ button:disabled {
   display: inline-flex;
   flex-direction: column;
   gap: 0.55rem;
-  background: rgba(54, 55, 66, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(47, 48, 58, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.03);
   color: var(--text-primary);
   box-shadow: 0 16px 26px rgba(2, 3, 6, 0.65);
 }
 
 .bubble--out {
   align-self: flex-end;
-  background: linear-gradient(135deg, rgba(164, 121, 255, 0.35), rgba(76, 73, 91, 0.95));
-  border-color: rgba(164, 121, 255, 0.4);
+  background: linear-gradient(135deg, rgba(163, 109, 255, 0.3), rgba(99, 80, 141, 0.85));
+  border-color: rgba(163, 109, 255, 0.45);
 }
 
 .bubble__text {
@@ -651,7 +651,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  background: rgba(11, 13, 20, 0.95);
+  background: var(--surface-1);
 }
 
 .composer__input {
@@ -662,7 +662,7 @@ button:disabled {
   padding: 0.85rem 1.1rem;
   border-radius: var(--radius-md);
   border: 1px solid var(--stroke-soft);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-2);
   color: inherit;
   font-size: 0.95rem;
   line-height: 1.55;
