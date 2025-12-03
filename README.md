@@ -32,43 +32,6 @@
 
 ---
 
-## 🖥️ Developer Console
-
-SOLink includes a built-in developer console for monitoring and debugging.
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| **📊 Real-time Dashboard** | Live stats: requests, errors, latency, unique wallets |
-| **📈 Charts** | Requests over time, category distribution, status breakdown |
-| **🔍 Event Logs** | Filterable table with all API events |
-| **❤️ Health Check** | Test all systems: KV, R2, Durable Objects, Solana RPC |
-| **🔎 Search** | Find events by ID, action, wallet, or details |
-| **📱 PWA** | Install as standalone app |
-| **🔄 Auto-refresh** | Updates every 10 seconds |
-
-### Event Categories
-
-- `auth` — Login, nonce, verify
-- `message` — Send, poll, ack
-- `voice` — Upload, download voice messages
-- `push` — Push notification subscriptions
-- `sync` — Cloud backup operations
-- `profile` — Nickname updates
-- `solana` — RPC proxy requests
-- `system` — Health checks, dev login
-
-### Scheduled Health Checks
-
-Automatic health check runs every 5 minutes via Cloudflare Cron Trigger, monitoring:
-- KV Storage
-- R2 Storage
-- Durable Objects
-- Solana RPC
-
----
-
 ## Security
 
 SOLink takes security seriously. We've achieved top ratings across security audits:
@@ -204,6 +167,43 @@ const nonce = nacl.randomBytes(24);
 const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
 // Only ciphertext + nonce sent to server
 ```
+
+---
+
+## 🖥️ Developer Console
+
+SOLink includes a built-in developer console for monitoring and debugging.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **📊 Real-time Dashboard** | Live stats: requests, errors, latency, unique wallets |
+| **📈 Charts** | Requests over time, category distribution, status breakdown |
+| **🔍 Event Logs** | Filterable table with all API events |
+| **❤️ Health Check** | Test all systems: KV, R2, Durable Objects, Solana RPC |
+| **🔎 Search** | Find events by ID, action, wallet, or details |
+| **📱 PWA** | Install as standalone app |
+| **🔄 Auto-refresh** | Updates every 10 seconds |
+
+### Event Categories
+
+- `auth` — Login, nonce, verify
+- `message` — Send, poll, ack
+- `voice` — Upload, download voice messages
+- `push` — Push notification subscriptions
+- `sync` — Cloud backup operations
+- `profile` — Nickname updates
+- `solana` — RPC proxy requests
+- `system` — Health checks, dev login
+
+### Scheduled Health Checks
+
+Automatic health check runs every 5 minutes via Cloudflare Cron Trigger, monitoring:
+- KV Storage
+- R2 Storage
+- Durable Objects
+- Solana RPC
 
 ---
 
