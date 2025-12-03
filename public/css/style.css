@@ -71,23 +71,18 @@ button:disabled {
 .app-shell {
   min-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(60% 60% at 35% 0%, rgba(203, 195, 228, 0.8), transparent 75%), var(--bg-root);
-  padding: 2.5rem;
+  position: relative;
+  background: radial-gradient(60% 60% at 35% 0%, rgba(203, 195, 228, 0.55), transparent 75%), var(--bg-root);
 }
 
 .app-layout {
-  width: min(1180px, 100%);
+  flex: 1;
   display: grid;
   grid-template-columns: 96px minmax(280px, 340px) minmax(0, 1fr) minmax(260px, 320px);
   grid-template-rows: 100vh;
   overflow: hidden;
   position: relative;
   z-index: 1;
-  border-radius: 36px;
-  box-shadow: 0 60px 120px rgba(32, 33, 47, 0.35);
-  background: var(--surface-0);
 }
 
 .nav-rail {
@@ -577,7 +572,7 @@ button:disabled {
   gap: 1.05rem;
   padding: 1.8rem 2.3rem;
   overflow-y: auto;
-  background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.04), transparent 55%), var(--bg-root);
+  background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.08), transparent 55%), var(--surface-1);
 }
 
 .timeline__day {
