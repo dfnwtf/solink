@@ -28,6 +28,8 @@ export class InboxDurable {
         return this.handlePull(payload?.limit);
       case "ack":
         return this.handleAck(payload?.ids || []);
+      case "ping":
+        return json({ ok: true, pong: Date.now() });
       default:
         return new Response("Unknown action", { status: 400 });
     }

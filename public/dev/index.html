@@ -2,10 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <title>Dev Console — SOLINK</title>
+  
+  <!-- PWA Meta Tags -->
+  <meta name="description" content="SOLink Developer Console - Monitor and debug your SOLink instance">
+  <meta name="theme-color" content="#0f0f10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SOLink Dev">
+  
+  <!-- Icons -->
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/dev/icon-192.svg">
+  <link rel="manifest" href="/dev/manifest.json">
+  
+  <!-- Fonts & Styles -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -53,6 +66,12 @@
           <span class="status-dot"></span>
           <span class="status-text">Connected</span>
         </div>
+        <button class="btn btn-health" id="btn-health">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+          <span>Health Check</span>
+        </button>
         <button class="btn btn-ghost" id="btn-logout">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -185,6 +204,7 @@
             <th class="col-details">Details</th>
             <th class="col-latency">Latency</th>
             <th class="col-status">Status</th>
+            <th class="col-id">ID</th>
           </tr>
         </thead>
         <tbody id="events-body">
@@ -239,9 +259,44 @@
       </label>
       <span class="refresh-countdown" id="refresh-countdown"></span>
     </div>
+
+    <!-- Health Check Modal -->
+    <div class="modal-overlay hidden" id="health-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            Health Check
+          </h2>
+          <button class="modal-close" id="health-modal-close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body" id="health-modal-body">
+          <!-- Content injected by JS -->
+        </div>
+        <div class="modal-footer">
+          <span class="modal-timestamp" id="health-modal-time"></span>
+          <button class="btn btn-primary" id="health-modal-ok">OK</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/dev.js"></script>
+  <script>
+    // Register Service Worker for PWA
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/dev/sw.js')
+        .then(reg => console.log('[PWA] Service Worker registered'))
+        .catch(err => console.warn('[PWA] SW registration failed:', err));
+    }
+  </script>
 </body>
 </html>
 
