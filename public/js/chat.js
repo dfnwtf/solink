@@ -3990,6 +3990,10 @@ function getMessagePreviewText(message) {
   if (nicknameChange) {
     return `Changed nickname: ${nicknameChange.oldName} → ${nicknameChange.newName}`;
   }
+  // Check for voice message
+  if (message.meta?.voice) {
+    return "Voice message";
+  }
   // Check for scan report
   if (message.meta?.isReport && message.meta?.report) {
     return `Scan Report: ${message.meta.report.tokenInfo?.name || "Token"}`;
@@ -4380,176 +4384,284 @@ function createVoiceBubble(message) {
   let audioElement = null;
   let audioUrl = null;
   let audioBlob = null; // Store blob for Chrome recreation
+  let isLoadingAudio = false;
+
+  // === Seek state ===
+  let isSeeking = false;
+  let seekPreviewPercent = 0;
+  let pendingSeekPercent = null; // Seek position to apply when audio is ready
+
+  // Get duration with fallback to metadata
+  function getAudioDuration() {
+    if (audioElement && isFinite(audioElement.duration) && audioElement.duration > 0) {
+      return audioElement.duration;
+    }
+    return voice.duration || 30;
+  }
+
+  // Attach audio event listeners (reusable for recreation)
+  function attachAudioListeners(audio) {
+    audio.addEventListener('timeupdate', () => {
+      // Don't update during seeking to prevent visual jitter
+      if (isSeeking) return;
+      const progress = audio.currentTime / audio.duration;
+      if (isFinite(progress)) {
+        drawWaveform(waveformCanvas, waveformBars, progress, playedColor, unplayedColor);
+        durationLabel.textContent = formatDuration(Math.floor(audio.currentTime));
+      }
+    });
+    
+    audio.addEventListener('ended', () => {
+      playBtn.dataset.state = 'paused';
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+      drawWaveform(waveformCanvas, waveformBars, 0, playedColor, unplayedColor);
+      durationLabel.textContent = formatDuration(voice.duration || 0);
+      // Chrome has issues with seeking blob URLs after playback ends
+      audio.dataset.needsRecreate = 'true';
+    });
+    
+    audio.addEventListener('error', (e) => {
+      // Only show toast for actual playback errors, not seek errors
+      const error = audio.error;
+      if (error && error.code !== MediaError.MEDIA_ERR_ABORTED) {
+        // Check if it's a seek error (PIPELINE_ERROR usually in message)
+        const isSeekError = error.message && (
+          error.message.includes('seek') || 
+          error.message.includes('PIPELINE') ||
+          error.message.includes('demuxer')
+        );
+        if (!isSeekError && !isSeeking) {
+          console.error('[Voice] Audio error:', error.code, error.message);
+          showToast('Failed to play voice message');
+        } else {
+          console.warn('[Voice] Seek-related error, will recreate:', error.message);
+          audio.dataset.needsRecreate = 'true';
+        }
+      }
+    });
+  }
+
+  // Load audio element (shared between play and seek)
+  async function loadAudioElement() {
+    if (audioElement && audioElement.readyState >= 2) return true;
+    if (isLoadingAudio) return false;
+    
+    isLoadingAudio = true;
+    playBtn.disabled = true;
+    playBtn.innerHTML = '<svg class="voice-player__spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>';
+    
+    try {
+      // Download and decrypt
+      const result = await downloadVoiceMessage(voice.key);
+      if (!result?.encryptedAudio) {
+        throw new Error('Voice not found');
+      }
+      
+      console.log('[Voice] Decrypting voice for contact:', message.contactKey?.slice(0, 8), 'nonce:', voice.nonce?.slice(0, 20), 'senderKey:', voice.senderKey?.slice(0, 20), 'hasSavedSecret:', !!voice.sessionSecret);
+      
+      let sessionSecret;
+      
+      // Priority 1: Use saved session secret (for outgoing messages after reload)
+      if (voice.sessionSecret) {
+        sessionSecret = voice.sessionSecret;
+        console.log('[Voice] Using saved session secret');
+      }
+      // Priority 2: For incoming, compute from senderKey
+      else if (voice.senderKey && message.direction === 'in') {
+        const myKeys = await ensureEncryptionKeys();
+        const senderKeyBytes = base64ToBytes(voice.senderKey);
+        const sharedBytes = nacl.box.before(senderKeyBytes, base64ToBytes(myKeys.secretKey));
+        sessionSecret = bytesToBase64(sharedBytes);
+        console.log('[Voice] Direct session secret computed, myPubKey:', myKeys.publicKey?.slice(0, 20));
+      }
+      // Priority 3: Standard session secret
+      else {
+        sessionSecret = await ensureSessionSecret(message.contactKey, { force: true });
+        console.log('[Voice] Using standard session secret');
+      }
+      
+      console.log('[Voice] Session secret obtained:', !!sessionSecret, sessionSecret?.slice(0, 20));
+      
+      if (!sessionSecret) {
+        throw new Error('No session secret available');
+      }
+      
+      console.log('[Voice] Decrypting with mimeType:', voice.mimeType);
+      let blob = await decryptVoiceData(
+        result.encryptedAudio,
+        voice.nonce,
+        sessionSecret,
+        voice.mimeType || 'audio/webm'
+      );
+      
+      if (!blob) {
+        throw new Error('Failed to decrypt');
+      }
+      
+      // Save session secret for future playback (after reload)
+      if (!voice.sessionSecret && sessionSecret) {
+        voice.sessionSecret = sessionSecret;
+        updateMessageMeta(message.id, { voice: { ...voice, sessionSecret } }).catch(() => {});
+      }
+      
+      // Use blob URL for audio playback
+      audioBlob = blob;
+      audioUrl = URL.createObjectURL(blob);
+      console.log('[Voice] Created blob URL:', audioUrl?.slice(0, 50), 'blob size:', blob.size, 'type:', blob.type);
+      
+      audioElement = new Audio(audioUrl);
+      
+      // Wait for audio to be ready
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          console.warn('[Voice] Audio load timeout');
+          resolve();
+        }, 5000);
+        
+        audioElement.oncanplaythrough = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        audioElement.onloadeddata = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        audioElement.onerror = (e) => {
+          clearTimeout(timeout);
+          console.error('[Voice] Audio element error:', audioElement.error);
+          reject(new Error('Audio load failed: ' + (audioElement.error?.message || 'unknown')));
+        };
+      });
+      
+      attachAudioListeners(audioElement);
+      
+      // Apply pending seek position if set
+      if (pendingSeekPercent !== null && isFinite(audioElement.duration)) {
+        try {
+          audioElement.currentTime = pendingSeekPercent * audioElement.duration;
+          console.log('[Voice] Applied pending seek:', pendingSeekPercent);
+        } catch {}
+        pendingSeekPercent = null;
+      }
+      
+      playBtn.disabled = false;
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+      isLoadingAudio = false;
+      return true;
+      
+    } catch (err) {
+      console.error('[Voice] Load error:', err);
+      showToast('Failed to load voice message');
+      playBtn.disabled = false;
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+      isLoadingAudio = false;
+      return false;
+    }
+  }
+
+  // Recreate audio for Chrome (blob URL issues after ended)
+  function recreateAudioIfNeeded(preserveTime = false) {
+    if (audioElement?.dataset?.needsRecreate === 'true' && audioBlob) {
+      const currentTime = preserveTime ? audioElement.currentTime : 0;
+      console.log('[Voice] Recreating audio element for Chrome compatibility');
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      audioUrl = URL.createObjectURL(audioBlob);
+      const newAudio = new Audio(audioUrl);
+      attachAudioListeners(newAudio);
+      audioElement = newAudio;
+      // Wait for ready and restore position
+      return new Promise((resolve) => {
+        const onReady = () => {
+          newAudio.removeEventListener('canplay', onReady);
+          if (preserveTime && currentTime > 0) {
+            try { newAudio.currentTime = currentTime; } catch {}
+          }
+          resolve(true);
+        };
+        newAudio.addEventListener('canplay', onReady);
+        // Timeout fallback
+        setTimeout(() => {
+          newAudio.removeEventListener('canplay', onReady);
+          resolve(true);
+        }, 1000);
+      });
+    }
+    return Promise.resolve(false);
+  }
+  
+  // Force recreate audio (for seek errors)
+  async function forceRecreateAudio(targetTime = 0) {
+    if (!audioBlob) return false;
+    console.log('[Voice] Force recreating audio at time:', targetTime);
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    audioUrl = URL.createObjectURL(audioBlob);
+    const newAudio = new Audio(audioUrl);
+    attachAudioListeners(newAudio);
+    audioElement = newAudio;
+    
+    return new Promise((resolve) => {
+      const onReady = () => {
+        newAudio.removeEventListener('canplay', onReady);
+        if (targetTime > 0 && isFinite(newAudio.duration)) {
+          try { 
+            newAudio.currentTime = Math.min(targetTime, newAudio.duration - 0.1); 
+          } catch {}
+        }
+        resolve(true);
+      };
+      newAudio.addEventListener('canplay', onReady);
+      setTimeout(() => {
+        newAudio.removeEventListener('canplay', onReady);
+        resolve(false);
+      }, 2000);
+    });
+  }
 
   playBtn.addEventListener('click', async () => {
     if (voice.loading) return;
     
     // Load audio if not loaded
-    if (!audioElement) {
-      playBtn.disabled = true;
-      playBtn.innerHTML = '<svg class="voice-player__spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>';
-      
-      try {
-        // Download and decrypt
-        const result = await downloadVoiceMessage(voice.key);
-        if (!result?.encryptedAudio) {
-          throw new Error('Voice not found');
-        }
-        
-        console.log('[Voice] Decrypting voice for contact:', message.contactKey?.slice(0, 8), 'nonce:', voice.nonce?.slice(0, 20), 'senderKey:', voice.senderKey?.slice(0, 20), 'hasSavedSecret:', !!voice.sessionSecret);
-        
-        let sessionSecret;
-        
-        // Priority 1: Use saved session secret (for outgoing messages after reload)
-        if (voice.sessionSecret) {
-          sessionSecret = voice.sessionSecret;
-          console.log('[Voice] Using saved session secret');
-        }
-        // Priority 2: For incoming, compute from senderKey
-        else if (voice.senderKey && message.direction === 'in') {
-          const myKeys = await ensureEncryptionKeys();
-          const senderKeyBytes = base64ToBytes(voice.senderKey);
-          const sharedBytes = nacl.box.before(senderKeyBytes, base64ToBytes(myKeys.secretKey));
-          sessionSecret = bytesToBase64(sharedBytes);
-          console.log('[Voice] Direct session secret computed, myPubKey:', myKeys.publicKey?.slice(0, 20));
-        }
-        // Priority 3: Standard session secret
-        else {
-          sessionSecret = await ensureSessionSecret(message.contactKey, { force: true });
-          console.log('[Voice] Using standard session secret');
-        }
-        
-        console.log('[Voice] Session secret obtained:', !!sessionSecret, sessionSecret?.slice(0, 20));
-        
-        if (!sessionSecret) {
-          throw new Error('No session secret available');
-        }
-        
-        console.log('[Voice] Decrypting with mimeType:', voice.mimeType);
-        let blob = await decryptVoiceData(
-          result.encryptedAudio,
-          voice.nonce,
-          sessionSecret,
-          voice.mimeType || 'audio/webm'
-        );
-        
-        if (!blob) {
-          throw new Error('Failed to decrypt');
-        }
-        
-        // Save session secret for future playback (after reload)
-        if (!voice.sessionSecret && sessionSecret) {
-          voice.sessionSecret = sessionSecret;
-          // Persist to IndexedDB
-          updateMessageMeta(message.id, { voice: { ...voice, sessionSecret } }).catch(() => {});
-        }
-        
-        // Use blob URL for audio playback
-        audioBlob = blob; // Store for Chrome recreation
-        audioUrl = URL.createObjectURL(blob);
-        console.log('[Voice] Created blob URL:', audioUrl?.slice(0, 50), 'blob size:', blob.size, 'type:', blob.type);
-        
-        audioElement = new Audio(audioUrl);
-        
-        // Wait for audio to be ready
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            console.warn('[Voice] Audio load timeout');
-            resolve(); // Don't reject, try to play anyway
-          }, 5000);
-          
-          audioElement.oncanplaythrough = () => {
-            clearTimeout(timeout);
-            resolve();
-          };
-          audioElement.onloadeddata = () => {
-            clearTimeout(timeout);
-            resolve();
-          };
-          audioElement.onerror = (e) => {
-            clearTimeout(timeout);
-            console.error('[Voice] Audio element error:', audioElement.error);
-            reject(new Error('Audio load failed: ' + (audioElement.error?.message || 'unknown')));
-          };
-        });
-        
-        audioElement.addEventListener('timeupdate', () => {
-          const progress = audioElement.currentTime / audioElement.duration;
-          drawWaveform(waveformCanvas, waveformBars, progress, playedColor, unplayedColor);
-          durationLabel.textContent = formatDuration(Math.floor(audioElement.currentTime));
-        });
-        
-        audioElement.addEventListener('ended', () => {
-          playBtn.dataset.state = 'paused';
-          playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-          drawWaveform(waveformCanvas, waveformBars, 0, playedColor, unplayedColor);
-          durationLabel.textContent = formatDuration(voice.duration || 0);
-          
-          // Chrome has issues with seeking blob URLs after playback ends
-          // Mark as needing recreation on next play
-          audioElement.dataset.needsRecreate = 'true';
-        });
-        
-        audioElement.addEventListener('error', () => {
-          showToast('Failed to play voice message');
-        });
-        
-      } catch (err) {
-        console.error('[Voice] Load error:', err);
-        showToast('Failed to load voice message');
-        playBtn.disabled = false;
-        playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-        return;
-      }
-      
-      playBtn.disabled = false;
-    }
-    
-    // Chrome: recreate audio element if needed (blob URL seek issues)
-    if (audioElement?.dataset?.needsRecreate === 'true' && audioBlob) {
-      console.log('[Voice] Recreating audio element for Chrome compatibility');
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-      audioUrl = URL.createObjectURL(audioBlob);
-      const newAudio = new Audio(audioUrl);
-      
-      // Re-attach event listeners
-      newAudio.addEventListener('timeupdate', () => {
-        const progress = newAudio.currentTime / newAudio.duration;
-        drawWaveform(waveformCanvas, waveformBars, progress, playedColor, unplayedColor);
-        durationLabel.textContent = formatDuration(Math.floor(newAudio.currentTime));
-      });
-      newAudio.addEventListener('ended', () => {
-        playBtn.dataset.state = 'paused';
-        playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-        drawWaveform(waveformCanvas, waveformBars, 0, playedColor, unplayedColor);
-        durationLabel.textContent = formatDuration(voice.duration || 0);
-        newAudio.dataset.needsRecreate = 'true';
-      });
-      newAudio.addEventListener('error', () => {
-        showToast('Failed to play voice message');
-      });
-      
-      audioElement = newAudio;
+    if (!audioElement || audioElement.readyState < 2) {
+      const loaded = await loadAudioElement();
+      if (!loaded) return;
     }
     
     // Toggle play/pause
     if (playBtn.dataset.state === 'paused') {
+      // Recreate if needed (only when starting play)
+      if (audioElement?.dataset?.needsRecreate === 'true') {
+        // Use pending seek position if set, otherwise 0
+        const seekPercent = pendingSeekPercent !== null ? pendingSeekPercent : 0;
+        const targetTime = seekPercent * getAudioDuration();
+        await forceRecreateAudio(targetTime);
+        // Update visual
+        drawWaveform(waveformCanvas, waveformBars, seekPercent, playedColor, unplayedColor);
+        pendingSeekPercent = null;
+      } 
+      // Apply pending seek if we have one
+      else if (pendingSeekPercent !== null && audioElement && isFinite(audioElement.duration)) {
+        try {
+          audioElement.currentTime = pendingSeekPercent * audioElement.duration;
+          // Update visual
+          drawWaveform(waveformCanvas, waveformBars, pendingSeekPercent, playedColor, unplayedColor);
+        } catch {}
+        pendingSeekPercent = null;
+      }
+      
       // Pause any other playing audio
       document.querySelectorAll('.voice-player__btn[data-state="playing"]').forEach(btn => {
         if (btn !== playBtn) btn.click();
       });
       
-      console.log('[Voice] Playing, readyState:', audioElement.readyState, 'networkState:', audioElement.networkState);
+      console.log('[Voice] Playing, readyState:', audioElement.readyState, 'currentTime:', audioElement.currentTime);
       
       try {
         await audioElement.play();
         playBtn.dataset.state = 'playing';
         playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
       } catch (err) {
-        // Ignore AbortError (play interrupted by pause)
         if (err.name !== 'AbortError') {
           console.warn('[Voice] Play error:', err.name, err.message);
-          // Try to reload audio
           if (audioUrl) URL.revokeObjectURL(audioUrl);
           audioElement = null;
           audioUrl = null;
@@ -4563,18 +4675,189 @@ function createVoiceBubble(message) {
     }
   });
 
-  // Click on progress to seek
-  waveformCanvas.addEventListener('click', (e) => {
-    if (!audioElement || !isFinite(audioElement.duration) || audioElement.readyState < 2) return;
+  // === Seek with Pointer Events ===
+  
+  // Get seek position from event
+  function getSeekPercent(e) {
     const rect = waveformCanvas.getBoundingClientRect();
-    const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    try {
-      audioElement.currentTime = percent * audioElement.duration;
-      drawWaveform(waveformCanvas, waveformBars, percent, playedColor, unplayedColor);
-    } catch (err) {
-      console.warn('[Voice] Seek error:', err);
+    // Support pointer, mouse, and touch events
+    let clientX;
+    if (e.clientX !== undefined) {
+      clientX = e.clientX;
+    } else if (e.touches && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+    } else if (e.changedTouches && e.changedTouches.length > 0) {
+      clientX = e.changedTouches[0].clientX;
+    } else {
+      // Fallback to last known position
+      return seekPreviewPercent;
     }
-  });
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  }
+
+  // Apply seek to audio element
+  async function applySeek(percent) {
+    // Always save pending seek position
+    pendingSeekPercent = percent;
+    
+    // If audio not loaded yet - just save position, will apply on play
+    if (!audioElement || audioElement.readyState < 2) {
+      console.log('[Voice] Audio not ready, saving seek position:', percent);
+      return;
+    }
+    
+    const wasPlaying = playBtn.dataset.state === 'playing';
+    const targetTime = percent * (isFinite(audioElement.duration) ? audioElement.duration : getAudioDuration());
+    
+    // If needs recreate
+    if (audioElement?.dataset?.needsRecreate === 'true') {
+      await forceRecreateAudio(targetTime);
+      pendingSeekPercent = null;
+      // Update visual after recreate
+      drawWaveform(waveformCanvas, waveformBars, percent, playedColor, unplayedColor);
+      durationLabel.textContent = formatDuration(Math.floor(targetTime));
+      // Resume if was playing
+      if (wasPlaying && audioElement) {
+        try {
+          await audioElement.play();
+        } catch {}
+      }
+      return;
+    }
+    
+    if (audioElement && isFinite(audioElement.duration)) {
+      try {
+        // Direct seek - works best for most cases
+        audioElement.currentTime = targetTime;
+        pendingSeekPercent = null;
+        
+        // Update visual
+        drawWaveform(waveformCanvas, waveformBars, percent, playedColor, unplayedColor);
+        durationLabel.textContent = formatDuration(Math.floor(targetTime));
+        
+      } catch (err) {
+        console.warn('[Voice] Seek error, recreating audio:', err.message);
+        // Seek failed - recreate audio and try again
+        const recreated = await forceRecreateAudio(targetTime);
+        if (recreated) {
+          pendingSeekPercent = null;
+          drawWaveform(waveformCanvas, waveformBars, percent, playedColor, unplayedColor);
+          if (wasPlaying && audioElement) {
+            try {
+              await audioElement.play();
+            } catch {}
+          }
+        }
+      }
+    }
+  }
+
+  function handleSeekStart(e) {
+    e.preventDefault();
+    isSeeking = true;
+    
+    // Capture pointer for reliable tracking outside element
+    if (e.pointerId !== undefined) {
+      try {
+        waveformCanvas.setPointerCapture(e.pointerId);
+      } catch {}
+    }
+    
+    seekPreviewPercent = getSeekPercent(e);
+    
+    // Instant visual feedback
+    drawWaveform(waveformCanvas, waveformBars, seekPreviewPercent, playedColor, unplayedColor);
+    durationLabel.textContent = formatDuration(Math.floor(seekPreviewPercent * getAudioDuration()));
+  }
+
+  function handleSeekMove(e) {
+    if (!isSeeking) return;
+    e.preventDefault();
+    
+    seekPreviewPercent = getSeekPercent(e);
+    
+    // Update visual during drag
+    drawWaveform(waveformCanvas, waveformBars, seekPreviewPercent, playedColor, unplayedColor);
+    durationLabel.textContent = formatDuration(Math.floor(seekPreviewPercent * getAudioDuration()));
+  }
+
+  async function handleSeekEnd(e) {
+    if (!isSeeking) return;
+    
+    // Release pointer capture immediately
+    if (e.pointerId !== undefined) {
+      try {
+        waveformCanvas.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+    
+    // Apply the seek (keep isSeeking true until done)
+    try {
+      await applySeek(seekPreviewPercent);
+    } finally {
+      isSeeking = false;
+    }
+  }
+
+  // Store active pointer ID for tracking
+  let activePointerId = null;
+
+  // Use Pointer Events (modern unified approach)
+  if (window.PointerEvent) {
+    waveformCanvas.addEventListener('pointerdown', (e) => {
+      activePointerId = e.pointerId;
+      handleSeekStart(e);
+    });
+    
+    waveformCanvas.addEventListener('pointermove', handleSeekMove);
+    
+    waveformCanvas.addEventListener('pointerup', (e) => {
+      if (e.pointerId === activePointerId) {
+        activePointerId = null;
+        handleSeekEnd(e);
+      }
+    });
+    
+    waveformCanvas.addEventListener('pointercancel', (e) => {
+      activePointerId = null;
+      handleSeekEnd(e);
+    });
+    
+    waveformCanvas.addEventListener('lostpointercapture', (e) => {
+      if (isSeeking) {
+        activePointerId = null;
+        handleSeekEnd(e);
+      }
+    });
+    
+    // Global handler for when pointer is released outside the element
+    document.addEventListener('pointerup', (e) => {
+      if (isSeeking && e.pointerId === activePointerId) {
+        activePointerId = null;
+        // Calculate position relative to waveform even if outside
+        seekPreviewPercent = getSeekPercent(e);
+        handleSeekEnd(e);
+      }
+    }, { passive: true });
+    
+  } else {
+    // Fallback for older browsers (Safari < 13)
+    waveformCanvas.addEventListener('mousedown', handleSeekStart);
+    waveformCanvas.addEventListener('mousemove', handleSeekMove);
+    waveformCanvas.addEventListener('mouseup', handleSeekEnd);
+    
+    // Global mouseup for when released outside
+    document.addEventListener('mouseup', (e) => {
+      if (isSeeking) {
+        handleSeekEnd(e);
+      }
+    }, { passive: true });
+    
+    waveformCanvas.addEventListener('touchstart', handleSeekStart, { passive: false });
+    waveformCanvas.addEventListener('touchmove', handleSeekMove, { passive: false });
+    waveformCanvas.addEventListener('touchend', handleSeekEnd);
+    waveformCanvas.addEventListener('touchcancel', handleSeekEnd);
+  }
 
   player.appendChild(playBtn);
   player.appendChild(waveformCanvas);
@@ -5117,6 +5400,12 @@ function updateForwardSubtitle(record) {
   const message = record?.message;
   const text = message?.text || "";
   
+  // Check if it's a voice message
+  if (message?.meta?.voice) {
+    ui.forwardSubtitle.textContent = "Voice message";
+    return;
+  }
+  
   // Check if it's a scan report (via meta or prefix)
   if (message?.meta?.isReport && message?.meta?.report) {
     const name = message.meta.report.tokenInfo?.name || "Token";
@@ -5442,6 +5731,10 @@ function clearReplyContext() {
 
 function buildReplyPreviewText(message) {
   if (!message) return "";
+  // Check for voice message
+  if (message.meta?.voice) {
+    return "Voice message";
+  }
   const payment = ensurePaymentMeta(message);
   if (payment) {
     const amountLabel = formatSolAmount(payment.lamports);
@@ -6973,7 +7266,7 @@ async function handleIncomingMessages(messages) {
         senderKey: payload.senderEncryptionKey, // For decryption
         loading: false,
       };
-      displayText = '🎤 Voice message';
+      displayText = 'Voice message';
     }
 
     // Check if this is a reaction message

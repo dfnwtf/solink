@@ -8575,6 +8575,10 @@ body.landing.landing--blank {
   height: 28px;
   cursor: pointer;
   border-radius: 4px;
+  touch-action: none; /* Prevent scroll during seek */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .voice-recording__waveform {
