@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Call Analytics — SOLINK Dev</title>
+  
+  <!-- PWA Meta Tags -->
+  <meta name="description" content="SOLink Call Analytics - Monitor voice calls and TURN usage">
+  <meta name="theme-color" content="#0f0f10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  
+  <!-- Icons -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/dev/icon-192.svg">
+  
+  <!-- Fonts & Styles -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/dev.css">
+  <link rel="stylesheet" href="/css/dev-calls.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- Login Screen -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-header">
+        <svg class="login-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <h1>SOLINK Dev Console</h1>
+        <p>Enter password to access call analytics</p>
+      </div>
+      <form id="login-form" class="login-form">
+        <div class="input-group">
+          <input type="password" id="password-input" placeholder="Password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary">
+          <span>Sign In</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </button>
+        <p id="login-error" class="login-error"></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main Console -->
+  <div id="console-app" class="console-app hidden">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-brand">
+        <a href="/dev/" class="header-back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </a>
+        <span class="header-logo">SOLINK</span>
+        <span class="header-divider">/</span>
+        <span class="header-title">Call Analytics</span>
+      </div>
+      <div class="header-actions">
+        <div class="connection-status" id="connection-status">
+          <span class="status-dot"></span>
+          <span class="status-text">Connected</span>
+        </div>
+        <a href="/dev/" class="btn btn-calls">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 17 10 11 4 5"/>
+            <line x1="12" y1="19" x2="20" y2="19"/>
+          </svg>
+          <span>Dev Console</span>
+        </a>
+        <button class="btn btn-secondary" id="btn-refresh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          <span>Refresh</span>
+        </button>
+        <button class="btn btn-ghost" id="btn-logout">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16,17 21,12 16,7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+          <span>Logout</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Period Selector -->
+    <div class="period-bar">
+      <div class="period-tabs">
+        <button class="period-tab" data-period="1h">1 Hour</button>
+        <button class="period-tab" data-period="6h">6 Hours</button>
+        <button class="period-tab active" data-period="24h">24 Hours</button>
+        <button class="period-tab" data-period="7d">7 Days</button>
+        <button class="period-tab" data-period="30d">30 Days</button>
+      </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+      <div class="stat-card stat-card--large">
+        <div class="stat-icon">📞</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-total-calls">0</div>
+          <div class="stat-label">Total Calls</div>
+        </div>
+      </div>
+      <div class="stat-card stat-card--success">
+        <div class="stat-icon">✅</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-successful">0</div>
+          <div class="stat-label">Successful</div>
+        </div>
+      </div>
+      <div class="stat-card stat-card--error">
+        <div class="stat-icon">❌</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-failed">0</div>
+          <div class="stat-label">Failed</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">⏱️</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-avg-duration">0:00</div>
+          <div class="stat-label">Avg Duration</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🕐</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-total-time">0:00</div>
+          <div class="stat-label">Total Talk Time</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-unique-users">0</div>
+          <div class="stat-label">Unique Users</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="charts-row">
+      <!-- Calls Over Time -->
+      <div class="chart-card chart-card--wide">
+        <div class="chart-header">
+          <h3>📈 Calls Over Time</h3>
+          <span class="chart-subtitle" id="chart-calls-subtitle">Last 24 hours</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-calls-timeline"></canvas>
+        </div>
+      </div>
+
+      <!-- End Reasons -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>📊 End Reasons</h3>
+        </div>
+        <div class="chart-container chart-container--small">
+          <canvas id="chart-end-reasons"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Second Row -->
+    <div class="charts-row">
+      <!-- Duration Distribution -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>⏱️ Duration Distribution</h3>
+        </div>
+        <div class="chart-container chart-container--small">
+          <canvas id="chart-duration"></canvas>
+        </div>
+      </div>
+
+      <!-- TURN Bandwidth -->
+      <div class="chart-card chart-card--wide">
+        <div class="chart-header">
+          <h3>📡 TURN Bandwidth</h3>
+          <div class="bandwidth-stats">
+            <span class="bandwidth-stat bandwidth-stat--egress">
+              <span class="bandwidth-dot"></span>
+              Egress: <strong id="stat-egress">0 MB</strong>
+            </span>
+            <span class="bandwidth-stat bandwidth-stat--ingress">
+              <span class="bandwidth-dot"></span>
+              Ingress: <strong id="stat-ingress">0 MB</strong>
+            </span>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-bandwidth"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Calls Table -->
+    <div class="calls-section">
+      <div class="section-header">
+        <h3>📋 Recent Calls</h3>
+        <span class="section-subtitle" id="calls-count">0 calls</span>
+      </div>
+      
+      <!-- Filters -->
+      <div class="calls-filters">
+        <div class="filter-group">
+          <label>Status</label>
+          <select id="filter-status" class="filter-select">
+            <option value="">All</option>
+            <option value="success">Connected</option>
+            <option value="failed">Failed</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>End Reason</label>
+          <select id="filter-reason" class="filter-select">
+            <option value="">All</option>
+            <option value="ended_by_user">Ended by user</option>
+            <option value="completed">Completed</option>
+            <option value="disconnected">Disconnected</option>
+            <option value="timeout">Timeout</option>
+            <option value="rejected">Rejected</option>
+            <option value="missed">Missed</option>
+            <option value="no_answer">No answer</option>
+            <option value="error">Error</option>
+          </select>
+        </div>
+        <div class="filter-group filter-group--search">
+          <label>Search Call ID</label>
+          <input type="text" id="filter-call-id" class="filter-input" placeholder="Enter call ID...">
+        </div>
+        <button class="btn btn-ghost btn-clear-filters" id="btn-clear-filters">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+          Clear
+        </button>
+      </div>
+      
+      <div class="calls-table-container">
+        <table class="calls-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>
+                Caller
+                <button class="btn-toggle-wallet" id="btn-toggle-wallets" title="Hide/Show wallets">
+                  <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                  <svg class="eye-closed hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                </button>
+              </th>
+              <th>Callee</th>
+              <th>Duration</th>
+              <th>Status</th>
+              <th>End Reason</th>
+              <th>Call ID</th>
+            </tr>
+          </thead>
+          <tbody id="calls-body">
+            <!-- Calls will be inserted here -->
+          </tbody>
+        </table>
+        
+        <!-- Empty State -->
+        <div id="empty-state" class="empty-state hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+          </svg>
+          <p>No calls recorded</p>
+          <span>Call data will appear here when calls are made</span>
+        </div>
+        
+        <!-- Loading State -->
+        <div id="loading-state" class="loading-state">
+          <div class="spinner"></div>
+          <span>Loading call data...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Auto-refresh indicator -->
+    <div class="auto-refresh" id="auto-refresh">
+      <label class="checkbox-label">
+        <input type="checkbox" id="auto-refresh-toggle" checked>
+        <span>Auto-refresh every 30s</span>
+      </label>
+      <span class="refresh-countdown" id="refresh-countdown"></span>
+    </div>
+  </div>
+
+  <script src="/js/dev-calls.js"></script>
+</body>
+</html>
+

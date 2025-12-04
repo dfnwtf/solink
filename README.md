@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>End-to-end encrypted wallet-to-wallet messaging</strong><br>
+  <strong>End-to-end encrypted wallet-to-wallet messaging with voice calls</strong><br>
   No registration. No phone number. Just your Phantom wallet.
 </p>
 
@@ -17,10 +17,26 @@
 
 ---
 
+## 🎉 What's New — Audio Calls!
+
+> **We jumped ahead of our roadmap!** We're thrilled to announce that **real-time audio calls** are now live in SOLink. This is a huge milestone in the evolution of our messenger — bringing Web3 communication to a whole new level.
+
+### 📞 Call Features
+- **1-on-1 Audio Calls** — Call any contact directly from chat
+- **Cloudflare TURN** — Reliable connectivity through NAT/firewalls
+- **WebRTC Powered** — Low-latency, high-quality audio with DTLS-SRTP encryption
+- **Call UI** — Full-screen and minimized modes, mute toggle, call timer
+- **Call History** — Incoming, outgoing, missed calls logged in chat
+- **30s Ring Timeout** — Auto-disconnect if no answer
+- **Responsive Design** — Works on desktop and mobile
+
+---
+
 ## ✨ Features
 
 - **🔑 Wallet-Native Identity** — Your Solana wallet is your identity. No signup, no passwords.
 - **🔒 End-to-End Encryption** — Messages encrypted with NaCl (XSalsa20-Poly1305). Server never sees plaintext.
+- **📞 Audio Calls** — Real-time voice calls powered by WebRTC and Cloudflare TURN.
 - **☁️ Cloud Sync** — Automatic encrypted backup to cloud. Clear cache, switch devices — your data stays safe.
 - **💸 Send SOL in Chat** — Transfer SOL directly in conversations.
 - **🎤 Voice Messages** — Record and send encrypted voice messages with waveform visualization.
@@ -52,6 +68,7 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 │  Phantom Wallet → Ed25519 signature for auth            │
 │  TweetNaCl      → X25519 key exchange                   │
 │  XSalsa20-Poly1305 → Message encryption                 │
+│  WebRTC         → DTLS-SRTP for voice calls             │
 │  IndexedDB      → Local cache (messages, contacts)      │
 └─────────────────────────────────────────────────────────┘
                             │
@@ -61,8 +78,9 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 │               Cloudflare Workers                         │
 ├─────────────────────────────────────────────────────────┤
 │  KV Storage     → Profiles, public keys, sessions       │
-│  Durable Objects → Message queue (encrypted)            │
+│  Durable Objects → Message queue + Call signaling       │
 │  R2 Storage     → Encrypted backups & voice messages    │
+│  TURN Server    → WebRTC relay for audio calls          │
 │  No plaintext ever touches the server                   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -84,10 +102,11 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 
 | Layer | Technologies |
 |-------|--------------|
-| **Frontend** | Vanilla JS, TweetNaCl, IndexedDB, CSS3 |
-| **Backend** | Cloudflare Workers, KV, Durable Objects, R2 |
-| **Encryption** | NaCl (X25519 + XSalsa20-Poly1305) |
+| **Frontend** | Vanilla JS, TweetNaCl, IndexedDB, WebRTC, CSS3 |
+| **Backend** | Cloudflare Workers, KV, Durable Objects, R2, TURN |
+| **Encryption** | NaCl (X25519 + XSalsa20-Poly1305), DTLS-SRTP |
 | **Blockchain** | Solana Web3.js, Phantom Wallet |
+| **Voice Calls** | WebRTC, Cloudflare TURN, Durable Objects (signaling) |
 
 ---
 
@@ -109,13 +128,19 @@ SOLink/
 │   │   ├── dev.js     # Dev console logic
 │   │   ├── api.js     # API client
 │   │   ├── db.js      # IndexedDB operations
-│   │   └── main.js    # Auth & wallet connection
+│   │   ├── main.js    # Auth & wallet connection
+│   │   └── call/      # Audio calls module
+│   │       ├── call-manager.js   # Call orchestration
+│   │       ├── call-signaling.js # WebSocket signaling
+│   │       ├── call-ui.js        # Call UI components
+│   │       └── webrtc-client.js  # WebRTC peer connection
 │   ├── icons/         # App icons
 │   ├── sw.js          # Service Worker
 │   └── index.html     # Landing page
 └── worker/
     ├── worker.js      # Cloudflare Worker
     ├── inbox-do.js    # Durable Object queue
+    ├── call-do.js     # Call signaling Durable Object
     └── utils/
         ├── crypto.js  # Crypto utilities
         ├── nonce.js   # Nonce management
@@ -223,8 +248,10 @@ Automatic health check runs every 5 minutes via Cloudflare Cron Trigger, monitor
 - [x] Mobile swipe gestures (reply/delete)
 - [x] Voice messages with waveform visualization
 - [x] Developer console with analytics
+- [x] **🎉 Audio Calls** (WebRTC + Cloudflare TURN) — *Ahead of schedule!*
 - [ ] Multi-wallet support (Solflare, Backpack)
 - [ ] Group chats
+- [ ] Video calls
 - [ ] Image sharing
 
 ---

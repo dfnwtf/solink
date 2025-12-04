@@ -2973,6 +2973,55 @@ button:disabled {
 .chat-column__actions {
   display: inline-flex;
   gap: 0.5rem;
+  align-items: center;
+}
+
+/* Call button in chat header */
+.chat-column__actions .call-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+}
+
+.chat-column__actions .call-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 16px rgba(34, 197, 94, 0.4);
+}
+
+.chat-column__actions .call-btn:active {
+  transform: scale(0.95);
+}
+
+.chat-column__actions .call-btn svg {
+  width: 18px;
+  height: 18px;
+  color: white;
+  stroke-width: 2;
+}
+
+.chat-column__actions .call-btn[hidden] {
+  display: none;
+}
+
+/* Mobile call button */
+@media (max-width: 768px) {
+  .chat-column__actions .call-btn {
+    width: 32px;
+    height: 32px;
+  }
+  
+  .chat-column__actions .call-btn svg {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 .chat-column__body {
@@ -3084,6 +3133,101 @@ button:disabled {
 .bubble--nickname-change .nickname-new {
   color: #9945ff;
   font-weight: 600;
+}
+
+/* Call message bubbles */
+.bubble--call {
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  padding: 12px 16px;
+}
+
+.bubble--call-success {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+.bubble--call-missed {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.bubble__call-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bubble__call-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.bubble--call-success .bubble__call-icon {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.bubble--call-missed .bubble__call-icon {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.bubble__call-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.call-icon--outgoing {
+  transform: rotate(45deg);
+}
+
+.call-icon--incoming {
+  transform: rotate(-135deg);
+}
+
+.bubble__call-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bubble__call-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.bubble--call-missed .bubble__call-text {
+  color: #ef4444;
+}
+
+.bubble__call-duration {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mobile call bubbles */
+@media (max-width: 480px) {
+  .bubble--call {
+    padding: 10px 14px;
+  }
+  
+  .bubble__call-icon {
+    width: 32px;
+    height: 32px;
+  }
+  
+  .bubble__call-icon svg {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 .bubble__text {
@@ -5081,6 +5225,22 @@ button:disabled {
   border-color: rgba(140, 91, 255, 0.85);
   background: rgba(140, 91, 255, 0.2);
   box-shadow: var(--shadow-float);
+}
+
+/* Call button in chat header */
+.ghost-icon-button.call-btn {
+  color: var(--accent);
+}
+
+.ghost-icon-button.call-btn:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #22c55e;
+}
+
+.ghost-icon-button.call-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .primary-button {

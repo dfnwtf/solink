@@ -39,6 +39,7 @@
       categories: null,
       status: null,
     },
+    walletsHidden: localStorage.getItem('dev_wallets_hidden') === 'true',
   };
 
   // ===================================
@@ -61,6 +62,8 @@
     auth: CHART_COLORS.primary,
     message: CHART_COLORS.success,
     voice: CHART_COLORS.purple,
+    call: '#22d3ee',
+    webrtc: '#a78bfa',
     push: CHART_COLORS.cyan,
     sync: CHART_COLORS.orange,
     profile: CHART_COLORS.pink,
@@ -97,6 +100,7 @@
     elements.emptyState = document.getElementById('empty-state');
     elements.loadingState = document.getElementById('loading-state');
     elements.paginationInfo = document.getElementById('pagination-info');
+    elements.btnToggleWallets = document.getElementById('btn-toggle-wallets');
     
     elements.statTotal = document.getElementById('stat-total');
     elements.statSuccess = document.getElementById('stat-success');
@@ -345,6 +349,11 @@
       const statusClass = event.status >= 400 ? 'status-badge--error' : 'status-badge--success';
       const walletClass = event.wallet === '-' ? 'event-wallet--empty' : '';
       
+      // Hide wallet if toggle is enabled
+      const walletDisplay = state.walletsHidden && event.wallet !== '-' 
+        ? `<span class="wallet-hidden">••••••••</span>` 
+        : event.wallet;
+      
       const eventId = event.id || '-';
       
       return `
@@ -353,7 +362,7 @@
           <td><span class="type-badge ${typeClass}">${event.type}</span></td>
           <td><span class="event-category">${event.category}</span></td>
           <td><span class="event-action">${event.action}</span></td>
-          <td><span class="event-wallet ${walletClass}">${event.wallet}</span></td>
+          <td><span class="event-wallet ${walletClass}" data-wallet="${event.wallet}">${walletDisplay}</span></td>
           <td><span class="event-details" title="${escapeHtml(event.details || '')}">${event.details || '-'}</span></td>
           <td><span class="event-latency">${event.latency ? event.latency + 'ms' : '-'}</span></td>
           <td><span class="status-badge ${statusClass}">${event.status}</span></td>
@@ -378,6 +387,40 @@
         }
       });
     });
+  }
+  
+  // Toggle wallets visibility for streaming privacy
+  function toggleWalletsVisibility() {
+    state.walletsHidden = !state.walletsHidden;
+    localStorage.setItem('dev_wallets_hidden', state.walletsHidden);
+    updateWalletsToggleIcon();
+    
+    // Update all visible wallets
+    document.querySelectorAll('.event-wallet').forEach(el => {
+      const wallet = el.dataset.wallet;
+      if (wallet && wallet !== '-') {
+        el.innerHTML = state.walletsHidden 
+          ? '<span class="wallet-hidden">••••••••</span>' 
+          : wallet;
+      }
+    });
+  }
+  
+  function updateWalletsToggleIcon() {
+    if (!elements.btnToggleWallets) return;
+    
+    const eyeOpen = elements.btnToggleWallets.querySelector('.eye-open');
+    const eyeClosed = elements.btnToggleWallets.querySelector('.eye-closed');
+    
+    if (state.walletsHidden) {
+      eyeOpen.classList.add('hidden');
+      eyeClosed.classList.remove('hidden');
+      elements.btnToggleWallets.title = 'Show wallets';
+    } else {
+      eyeOpen.classList.remove('hidden');
+      eyeClosed.classList.add('hidden');
+      elements.btnToggleWallets.title = 'Hide wallets';
+    }
   }
   
   function updatePagination() {
@@ -526,6 +569,10 @@
     document.getElementById('health-modal').addEventListener('click', (e) => {
       if (e.target.id === 'health-modal') hideHealthModal();
     });
+    
+    // Toggle Wallets Visibility
+    elements.btnToggleWallets.addEventListener('click', toggleWalletsVisibility);
+    updateWalletsToggleIcon();
     
     // Refresh
     elements.btnRefresh.addEventListener('click', () => {
@@ -876,6 +923,468 @@
   function init() {
     cacheElements();
     setupEventHandlers();
+    initCharts();
+    
+    // Check for existing token
+    if (state.token) {
+      // Verify token is still valid
+      fetchStats()
+        .then(() => showConsole())
+        .catch(() => {
+          state.token = null;
+          localStorage.removeItem('dev_token');
+          showLogin();
+        });
+    } else {
+      showLogin();
+    }
+  }
+  
+  // ===================================
+  // WebRTC Tester
+  // ===================================
+
+  const webrtcTester = {
+    peerConnection: null,
+    iceServers: null,
+    iceCandidates: [],
+    sdp: null,
+    testResults: {},
+    
+    async runAllTests() {
+      this.resetResults();
+      
+      // Hide overall result during testing
+      document.getElementById('webrtc-overall').classList.add('hidden');
+      
+      await this.testTurnCredentials();
+      await this.testIceConnectivity();
+      
+      // Show overall result
+      this.showOverallResult();
+      
+      // Log to activity feed
+      await this.logTestResults();
+      
+      document.getElementById('webrtc-modal-time').textContent = 
+        `Tested at ${new Date().toLocaleTimeString()}`;
+    },
+    
+    resetResults() {
+      this.cleanup();
+      this.iceCandidates = [];
+      this.sdp = null;
+      this.testResults = {};
+      
+      // Reset all statuses
+      ['turn-creds', 'ice', 'peer'].forEach(id => {
+        const statusEl = document.getElementById(`${id}-status`);
+        if (statusEl) {
+          statusEl.textContent = '—';
+          statusEl.className = 'test-status';
+        }
+        const detailsEl = document.getElementById(`${id}-details`);
+        if (detailsEl) detailsEl.classList.add('hidden');
+      });
+      
+      document.getElementById('sdp-content').textContent = 'Run tests to see SDP...';
+      document.getElementById('ice-candidates').innerHTML = '';
+      document.getElementById('webrtc-overall').classList.add('hidden');
+    },
+    
+    setStatus(testId, status, text) {
+      const el = document.getElementById(`${testId}-status`);
+      if (el) {
+        el.textContent = text || status;
+        el.className = `test-status test-status--${status}`;
+      }
+      // Store result
+      this.testResults[testId] = { status, text: text || status };
+    },
+    
+    showDetails(testId) {
+      const el = document.getElementById(`${testId}-details`);
+      if (el) el.classList.remove('hidden');
+    },
+    
+    showOverallResult() {
+      const overall = document.getElementById('webrtc-overall');
+      const icon = document.getElementById('overall-icon');
+      const title = document.getElementById('overall-title');
+      const subtitle = document.getElementById('overall-subtitle');
+      
+      // Analyze results
+      const turnOk = this.testResults['turn-creds']?.status === 'pass';
+      const iceOk = this.testResults['ice']?.status === 'pass';
+      const iceWarn = this.testResults['ice']?.status === 'warn';
+      const hasRelay = this.iceCandidates.some(c => c.type === 'relay');
+      const hasSrflx = this.iceCandidates.some(c => c.type === 'srflx');
+      
+      overall.classList.remove('hidden', 'webrtc-overall--success', 'webrtc-overall--warning', 'webrtc-overall--error');
+      
+      if (turnOk && iceOk) {
+        overall.classList.add('webrtc-overall--success');
+        icon.textContent = '✓';
+        title.textContent = 'All Systems Ready';
+        subtitle.textContent = `WebRTC fully functional • ${this.iceCandidates.length} ICE candidates • TURN relay available`;
+      } else if (turnOk && iceWarn) {
+        overall.classList.add('webrtc-overall--warning');
+        icon.textContent = '⚠';
+        title.textContent = 'Partially Ready';
+        if (!hasRelay) {
+          subtitle.textContent = 'TURN relay not available — calls may fail behind strict NAT/firewall';
+        } else if (!hasSrflx) {
+          subtitle.textContent = 'STUN reflexive not available — using relay only';
+        } else {
+          subtitle.textContent = 'Some connectivity limitations detected';
+        }
+      } else {
+        overall.classList.add('webrtc-overall--error');
+        icon.textContent = '✗';
+        title.textContent = 'Connection Issues';
+        if (!turnOk) {
+          subtitle.textContent = 'Failed to get TURN credentials — calls will not work';
+        } else {
+          subtitle.textContent = 'ICE connectivity failed — check firewall settings';
+        }
+      }
+    },
+    
+    async logTestResults() {
+      try {
+        const iceTypes = {
+          host: this.iceCandidates.filter(c => c.type === 'host').length,
+          srflx: this.iceCandidates.filter(c => c.type === 'srflx').length,
+          relay: this.iceCandidates.filter(c => c.type === 'relay').length,
+        };
+        
+        const overallStatus = this.testResults['turn-creds']?.status === 'pass' && 
+                              (this.testResults['ice']?.status === 'pass' || this.testResults['ice']?.status === 'warn')
+                              ? 'ok' : 'fail';
+        
+        await apiRequest('/webrtc-test-log', {
+          method: 'POST',
+          body: JSON.stringify({
+            turn: this.testResults['turn-creds']?.status || 'unknown',
+            ice: this.testResults['ice']?.status || 'unknown',
+            candidates: this.iceCandidates.length,
+            iceTypes,
+            overall: overallStatus,
+          }),
+        });
+      } catch (e) {
+        console.warn('[WebRTC Test] Failed to log results:', e);
+      }
+    },
+    
+    // Test TURN Credentials
+    async testTurnCredentials() {
+      this.setStatus('turn-creds', 'running', 'Fetching...');
+      
+      try {
+        const response = await apiRequest('/turn-test');
+        
+        if (response.iceServers) {
+          this.iceServers = response.iceServers;
+          
+          const info = document.getElementById('turn-creds-info');
+          const servers = response.iceServers.map(s => {
+            const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+            return urls.map(url => {
+              const type = url.startsWith('turn:') ? 'TURN' : 'STUN';
+              return `${type}: ${url}`;
+            }).join('\n');
+          }).join('\n');
+          
+          info.innerHTML = `Servers:\n${servers}\n\nTTL: ${response.ttl || 'N/A'}s`;
+          
+          this.setStatus('turn-creds', 'pass', 'OK');
+          this.showDetails('turn-creds');
+        } else {
+          throw new Error('No ICE servers in response');
+        }
+        
+      } catch (error) {
+        console.error('[WebRTC Test] TURN credentials error:', error);
+        this.setStatus('turn-creds', 'fail', 'Failed');
+        
+        const info = document.getElementById('turn-creds-info');
+        info.textContent = `Error: ${error.message}`;
+        this.showDetails('turn-creds');
+      }
+    },
+    
+    // Test ICE Connectivity
+    async testIceConnectivity() {
+      this.setStatus('ice', 'running', 'Gathering...');
+      this.setStatus('peer', 'running', 'Creating...');
+      
+      try {
+        // Use fetched TURN servers or fallback
+        const config = {
+          iceServers: this.iceServers || [
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            { urls: 'stun:stun.l.google.com:19302' },
+          ],
+          iceCandidatePoolSize: 10,
+        };
+        
+        this.peerConnection = new RTCPeerConnection(config);
+        
+        // Add local stream if available
+        if (this.localStream) {
+          this.localStream.getTracks().forEach(track => {
+            this.peerConnection.addTrack(track, this.localStream);
+          });
+        }
+        
+        // Collect ICE candidates
+        const candidatesContainer = document.getElementById('ice-candidates');
+        
+        this.peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            this.iceCandidates.push(event.candidate);
+            this.renderIceCandidate(candidatesContainer, event.candidate);
+          }
+        };
+        
+        this.peerConnection.onicegatheringstatechange = () => {
+          const state = this.peerConnection.iceGatheringState;
+          if (state === 'complete') {
+            this.evaluateIceResults();
+          }
+        };
+        
+        // Track connection state
+        this.peerConnection.onconnectionstatechange = () => {
+          const state = this.peerConnection.connectionState;
+          const info = document.getElementById('peer-info');
+          info.textContent = `Connection State: ${state}`;
+          this.showDetails('peer');
+        };
+        
+        // Create offer to trigger ICE gathering
+        const offer = await this.peerConnection.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: false,
+        });
+        
+        await this.peerConnection.setLocalDescription(offer);
+        
+        // Store SDP
+        this.sdp = offer.sdp;
+        document.getElementById('sdp-content').textContent = this.formatSdp(offer.sdp);
+        
+        this.setStatus('peer', 'pass', 'Created');
+        this.showDetails('peer');
+        this.showDetails('ice');
+        
+        // Wait for ICE gathering with timeout
+        await this.waitForIceGathering(5000);
+        
+      } catch (error) {
+        console.error('[WebRTC Test] ICE error:', error);
+        this.setStatus('ice', 'fail', 'Failed');
+        this.setStatus('peer', 'fail', 'Failed');
+        
+        const info = document.getElementById('peer-info');
+        info.textContent = `Error: ${error.message}`;
+        this.showDetails('peer');
+      }
+    },
+    
+    waitForIceGathering(timeout) {
+      return new Promise((resolve) => {
+        const pc = this.peerConnection;
+        
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+          return;
+        }
+        
+        const timer = setTimeout(() => {
+          this.evaluateIceResults();
+          resolve();
+        }, timeout);
+        
+        const checkState = () => {
+          if (pc.iceGatheringState === 'complete') {
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        
+        pc.addEventListener('icegatheringstatechange', checkState);
+      });
+    },
+    
+    evaluateIceResults() {
+      const candidates = this.iceCandidates;
+      const types = {
+        host: candidates.filter(c => c.type === 'host').length,
+        srflx: candidates.filter(c => c.type === 'srflx').length,
+        relay: candidates.filter(c => c.type === 'relay').length,
+        prflx: candidates.filter(c => c.type === 'prflx').length,
+      };
+      
+      let status = 'pass';
+      let text = 'OK';
+      
+      if (candidates.length === 0) {
+        status = 'fail';
+        text = 'No Candidates';
+      } else if (types.relay === 0 && types.srflx === 0) {
+        status = 'warn';
+        text = 'Host Only';
+      } else if (types.relay === 0) {
+        status = 'warn';
+        text = 'No TURN';
+      }
+      
+      this.setStatus('ice', status, text);
+      
+      // Update info
+      const info = document.getElementById('peer-info');
+      info.textContent = `ICE Candidates: ${candidates.length}
+  Host: ${types.host}
+  SRFLX (STUN): ${types.srflx}
+  Relay (TURN): ${types.relay}
+  PRFLX: ${types.prflx}
+
+Gathering: ${this.peerConnection?.iceGatheringState || 'N/A'}`;
+    },
+    
+    renderIceCandidate(container, candidate) {
+      const div = document.createElement('div');
+      div.className = 'ice-candidate';
+      
+      const type = candidate.type || 'unknown';
+      const address = candidate.address || candidate.ip || 'N/A';
+      const port = candidate.port || '';
+      const protocol = candidate.protocol || '';
+      
+      div.innerHTML = `
+        <span class="ice-type ice-type--${type}">${type}</span>
+        <span class="ice-address">${address}:${port}</span>
+        <span class="ice-protocol">${protocol}</span>
+      `;
+      
+      container.appendChild(div);
+    },
+    
+    formatSdp(sdp) {
+      // Highlight important parts
+      return sdp
+        .split('\n')
+        .map(line => {
+          if (line.startsWith('a=candidate')) {
+            return `→ ${line}`;
+          }
+          if (line.startsWith('a=ice-')) {
+            return `★ ${line}`;
+          }
+          return line;
+        })
+        .join('\n');
+    },
+    
+    copyResults() {
+      const iceTypes = {
+        host: this.iceCandidates.filter(c => c.type === 'host').length,
+        srflx: this.iceCandidates.filter(c => c.type === 'srflx').length,
+        relay: this.iceCandidates.filter(c => c.type === 'relay').length,
+      };
+      
+      const results = {
+        timestamp: new Date().toISOString(),
+        turnCredentials: {
+          status: document.getElementById('turn-creds-status')?.textContent,
+          details: document.getElementById('turn-creds-info')?.textContent,
+        },
+        ice: {
+          status: document.getElementById('ice-status')?.textContent,
+          candidatesCount: this.iceCandidates.length,
+          types: iceTypes,
+          candidates: this.iceCandidates.map(c => ({
+            type: c.type,
+            address: c.address || c.ip,
+            port: c.port,
+            protocol: c.protocol,
+          })),
+        },
+        sdp: this.sdp,
+      };
+      
+      navigator.clipboard.writeText(JSON.stringify(results, null, 2)).then(() => {
+        const btn = document.getElementById('btn-copy-results');
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+          btn.textContent = 'Copy Results';
+        }, 2000);
+      });
+    },
+    
+    cleanup() {
+      if (this.peerConnection) {
+        this.peerConnection.close();
+        this.peerConnection = null;
+      }
+    },
+  };
+  
+  function showWebRTCModal() {
+    document.getElementById('webrtc-modal').classList.remove('hidden');
+  }
+  
+  function hideWebRTCModal() {
+    document.getElementById('webrtc-modal').classList.add('hidden');
+    webrtcTester.cleanup();
+  }
+  
+  function setupWebRTCTestHandlers() {
+    const btnWebRTC = document.getElementById('btn-webrtc');
+    const modal = document.getElementById('webrtc-modal');
+    
+    if (btnWebRTC) {
+      btnWebRTC.addEventListener('click', showWebRTCModal);
+    }
+    
+    // Close handlers
+    document.getElementById('webrtc-modal-close')?.addEventListener('click', hideWebRTCModal);
+    document.getElementById('webrtc-modal-ok')?.addEventListener('click', hideWebRTCModal);
+    modal?.addEventListener('click', (e) => {
+      if (e.target.id === 'webrtc-modal') hideWebRTCModal();
+    });
+    
+    // Test buttons
+    document.getElementById('btn-run-all-tests')?.addEventListener('click', () => {
+      webrtcTester.runAllTests();
+    });
+    
+    document.getElementById('btn-copy-results')?.addEventListener('click', () => {
+      webrtcTester.copyResults();
+    });
+    
+    // Toggle test details on click
+    document.querySelectorAll('.test-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const section = header.parentElement;
+        const details = section.querySelector('.test-details');
+        if (details && !details.classList.contains('hidden')) {
+          details.classList.toggle('expanded');
+        }
+      });
+    });
+  }
+
+  // ===================================
+  // Initialization
+  // ===================================
+  
+  function init() {
+    cacheElements();
+    setupEventHandlers();
+    setupWebRTCTestHandlers();
     initCharts();
     
     // Check for existing token

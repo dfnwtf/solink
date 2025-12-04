@@ -1,6 +1,6 @@
 // SOLink Service Worker for Push Notifications
-const SW_VERSION = "1.1";
-const CACHE_NAME = "solink-v1";
+const SW_VERSION = "1.2";
+const CACHE_NAME = "solink-v2";
 
 console.log("[SW] Service Worker version:", SW_VERSION);
 
