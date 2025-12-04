@@ -33,9 +33,14 @@
           </button>
         </nav>
         <div class="nav-rail__footer">
-          <button type="button" class="nav-rail__connect" data-action="connect-wallet">
-            <span class="icon icon-wallet"></span>
-            Connect
+          <button
+            type="button"
+            class="nav-rail__connect"
+            data-action="reconnect-wallet"
+            aria-label="Reconnect wallet"
+            title="Reconnect wallet"
+          >
+            <span class="icon icon-reload"></span>
           </button>
         </div>
       </aside>
@@ -190,6 +195,16 @@
           <p>Coming soon.</p>
         </div>
       </aside>
+    </div>
+
+    <div class="connect-overlay" data-role="connect-overlay" hidden>
+      <div class="connect-overlay__panel">
+        <h1>Ready to chat securely</h1>
+        <p>Connect your Solana wallet to unlock encrypted conversations.</p>
+        <button type="button" class="primary-button connect-overlay__button" data-action="connect-wallet">
+          Connect wallet
+        </button>
+      </div>
     </div>
 
     <div class="onboarding" data-role="onboarding" hidden>

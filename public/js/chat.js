@@ -110,7 +110,9 @@ async function loadWorkspace(walletPubkey) {
 
 function cacheDom() {
   ui.navButtons = Array.from(document.querySelectorAll("[data-nav]"));
-  ui.navConnect = document.querySelector("[data-action=\"connect-wallet\"]");
+  ui.navReconnect = document.querySelector("[data-action=\"reconnect-wallet\"]");
+  ui.connectOverlay = document.querySelector("[data-role=\"connect-overlay\"]");
+  ui.overlayConnectButton = document.querySelector("[data-role=\"connect-overlay\"] [data-action=\"connect-wallet\"]");
 
   ui.sidebar = document.querySelector(".list-column");
   ui.sidebarDefault = document.querySelector("[data-role=\"sidebar-default\"]");
@@ -234,12 +236,15 @@ function bindEvents() {
   ui.profileAvatar?.addEventListener("click", handleProfileCardClick);
   ui.profileNickname?.addEventListener("click", handleProfileCardClick);
 
-  ui.navConnect?.addEventListener("click", () => {
+  const handleConnectClick = () => {
     requestConnect().catch((error) => {
       console.warn("Connect error", error);
       showToast("Wallet connection failed");
     });
-  });
+  };
+
+  ui.navReconnect?.addEventListener("click", handleConnectClick);
+  ui.overlayConnectButton?.addEventListener("click", handleConnectClick);
 
   ui.searchForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1165,6 +1170,11 @@ function toggleComposer(enabled) {
   }
 }
 
+function toggleConnectOverlay(visible) {
+  if (!ui.connectOverlay) return;
+  ui.connectOverlay.hidden = !visible;
+}
+
 function insertEmojiAtCursor(emojiChar) {
   if (!ui.messageInput || !emojiChar) return;
   const input = ui.messageInput;
@@ -1837,8 +1847,10 @@ async function handleAppStateChange(appState) {
   updateStatusLabel(appState);
   updateShareLink(appState);
   updateProfileHeader();
+  const hasSession = Boolean(appState?.walletPubkey && appState?.isAuthenticated);
+  toggleConnectOverlay(!hasSession);
 
-  toggleComposer(Boolean(appState.isAuthenticated && state.activeContactKey));
+  toggleComposer(Boolean(appState?.isAuthenticated && state.activeContactKey));
 
   const nextWallet = appState.walletPubkey || null;
   const walletChanged = nextWallet !== state.currentWallet;
