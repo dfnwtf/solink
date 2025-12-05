@@ -1,7 +1,7 @@
 # 🔐 SOLink — Secure Web3 Messenger on Solana
 
 <p align="center">
-  <img src="public/solink-banner-1500x500-v2.svg" alt="SOLink" width="900">
+  <img src="branding/solink-header-3000x1000.svg" alt="SOLink" width="900">
 </p>
 
 <p align="center">
