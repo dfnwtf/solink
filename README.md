@@ -256,12 +256,6 @@ Automatic health check runs every 5 minutes via Cloudflare Cron Trigger, monitor
 
 ---
 
-## 🤝 Contributing
-
-Contributions welcome! Please read our security guidelines before submitting PRs.
-
----
-
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE) for details.
