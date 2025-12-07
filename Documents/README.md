@@ -2,6 +2,9 @@
 
 > Inline preview of the SVG assets inside this folder.
 
+## Cover
+<img src="SVG/Background+logo.svg" alt="SOLink Cover" width="2000">
+
 ## Architecture
 <img src="SVG/architecture-card.svg" alt="Architecture Card" width="2000">
 
