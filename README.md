@@ -114,38 +114,65 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 
 ```
 SOLink/
-├── public/
-│   ├── app/           # Main messenger app
-│   ├── dev/           # Developer console (PWA)
-│   │   ├── index.html # Console UI
-│   │   ├── manifest.json
-│   │   └── sw.js      # Service Worker
+├── public/                     # Static frontend
+│   ├── app/                    # Main app (UI shell)
+│   │   ├── index.html          # App shell + import map
+│   │   └── og-image.png        # Open Graph image
+│   ├── dev/                    # Dev console (PWA)
+│   │   ├── calls/              # WebRTC call test page
+│   │   │   └── index.html
+│   │   ├── index.html          # Dev console main
+│   │   ├── manifest.json       # PWA manifest
+│   │   └── sw.js               # Dev service worker
 │   ├── css/
-│   │   ├── style.css  # Main app styles
-│   │   └── dev.css    # Dev console styles
+│   │   ├── style.css           # Main app styles
+│   │   ├── dev.css             # Dev console styles
+│   │   └── dev-calls.css       # Call test page styles
 │   ├── js/
-│   │   ├── chat.js    # Main chat logic
-│   │   ├── dev.js     # Dev console logic
-│   │   ├── api.js     # API client
-│   │   ├── db.js      # IndexedDB operations
-│   │   ├── main.js    # Auth & wallet connection
-│   │   └── call/      # Audio calls module
-│   │       ├── call-manager.js   # Call orchestration
-│   │       ├── call-signaling.js # WebSocket signaling
-│   │       ├── call-ui.js        # Call UI components
-│   │       └── webrtc-client.js  # WebRTC peer connection
-│   ├── icons/         # App icons
-│   ├── sw.js          # Service Worker
-│   └── index.html     # Landing page
-└── worker/
-    ├── worker.js      # Cloudflare Worker
-    ├── inbox-do.js    # Durable Object queue
-    ├── call-do.js     # Call signaling Durable Object
-    └── utils/
-        ├── crypto.js  # Crypto utilities
-        ├── nonce.js   # Nonce management
-        ├── ratelimit.js # Rate limiting
-        └── logger.js  # Dev console logging
+│   │   ├── api.js              # API client (fetch)
+│   │   ├── chat.js             # Chat logic, inbox, rendering
+│   │   ├── db.js               # IndexedDB helpers
+│   │   ├── dev.js              # Dev console logic
+│   │   ├── dev-calls.js        # WebRTC diagnostics/tests
+│   │   ├── landing.js          # Landing page scripts
+│   │   ├── main.js             # Auth + wallet bootstrap
+│   │   ├── phantom-mobile.js   # Phantom Mobile support
+│   │   ├── voice-recorder.js   # Voice message recording
+│   │   ├── call/               # Audio call module (WebRTC)
+│   │   │   ├── call-manager.js     # Call orchestration (UI + signaling)
+│   │   │   ├── call-signaling.js   # WebSocket signaling client
+│   │   │   ├── call-ui.js          # Call UI components
+│   │   │   └── webrtc-client.js     # PeerConnection, ICE, media
+│   │   └── vendor/             # Local vendored deps
+│   │       ├── eventemitter3-wrapper.js
+│   │       ├── jayson-browser.js
+│   │       ├── rpc-websocket-client.js
+│   │       └── rpc-websocket-factory.js
+│   ├── media/                  # Assets (audio/icons)
+│   │   ├── caller.mp3          # Outgoing dial tone
+│   │   ├── incoming.mp3        # Incoming ringtone
+│   │   ├── inbox.mp3           # Legacy message ping
+│   │   └── *.svg/png           # Logos, partners
+│   ├── icons/                  # PWA icons
+│   ├── presentation/           # Presentation materials
+│   │   ├── background-presentation.mp3
+│   │   └── index.html
+│   ├── manifest.json           # App PWA manifest
+│   ├── sw.js                   # Main service worker
+│   ├── _redirects              # Pages redirects
+│   ├── favicon.* / og-image.*  # Favicons & OG images
+│   ├── robots.txt / sitemap.xml
+│   ├── index.html              # Landing page
+│   └── help/, privacy/, terms/, disclaimer/ # Static pages
+├── worker/                     # Cloudflare Worker + Durable Objects
+│   ├── worker.js               # Main worker: API routing
+│   ├── inbox-do.js             # Inbox/message queue DO
+│   ├── call-do.js              # Call signaling DO
+│   └── utils/
+│       ├── crypto.js           # Crypto helpers
+│       ├── nonce.js            # Nonce management
+│       ├── ratelimit.js        # Rate limiting
+│       └── logger.js           # Dev console logging
 ```
 
 ---
