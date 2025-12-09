@@ -80,6 +80,18 @@
     </script>
     
     <link rel="stylesheet" href="./css/style.css?v=20241201" />
+    <style>
+      /* Simple scroll-in effect (reuse for presentation button) */
+      .fade-in-up {
+        opacity: 0;
+        transform: translateY(14px);
+        transition: opacity 0.6s ease, transform 0.6s ease;
+      }
+      .fade-in-up.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    </style>
   </head>
   <body class="landing landing--blank">
     <div class="hero-nav">
@@ -260,6 +272,14 @@
             <p>Messages are encrypted client-side before transmission. Servers never see plaintext data.</p>
           </div>
         </div>
+
+        <div class="about-block__cta" style="display:flex; align-items:center; justify-content:center; gap:16px; margin: 8px 0 -16px;">
+          <span aria-hidden="true" style="height:1px; width:28%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18));"></span>
+          <a class="ts-token__link" href="/presentation/" style="font-size: 1.12rem; padding: 1rem 2.1rem; min-width: 280px; text-align: center;">
+            Explore Presentation →
+          </a>
+          <span aria-hidden="true" style="height:1px; width:28%; background: linear-gradient(90deg, rgba(255,255,255,0.18), transparent);"></span>
+        </div>
       </div>
     </section>
 
@@ -340,5 +360,20 @@
       </div>
     </section>
     <script src="/js/landing.js?v=20241130"></script>
+    <script>
+      // Reveal on scroll for elements with .fade-in-up
+      document.addEventListener('DOMContentLoaded', () => {
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('visible');
+              observer.unobserve(entry.target);
+            }
+          });
+        }, { threshold: 0.1, rootMargin: "0px 0px -10% 0px" });
+
+        document.querySelectorAll('.fade-in-up').forEach(el => observer.observe(el));
+      });
+    </script>
   </body>
 </html>
