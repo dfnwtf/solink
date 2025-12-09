@@ -1,0 +1,123 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg-linear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#040306"/>
+      <stop offset="18%" stop-color="#05040a"/>
+      <stop offset="32%" stop-color="#0b1524"/>
+      <stop offset="45%" stop-color="#101d2a"/>
+      <stop offset="58%" stop-color="#0c121e"/>
+      <stop offset="70%" stop-color="#05080f"/>
+      <stop offset="100%" stop-color="#010103"/>
+    </linearGradient>
+    <radialGradient id="glow-purple" cx="0.5" cy="0.4" r="0.6">
+      <stop offset="0%" stop-color="#8752FF" stop-opacity="0.45"/>
+      <stop offset="60%" stop-color="#8752FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-rose" cx="0.7" cy="0.65" r="0.5">
+      <stop offset="0%" stop-color="#FF73AF" stop-opacity="0.3"/>
+      <stop offset="68%" stop-color="#FF73AF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-lilac" cx="0.3" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#B17BFF" stop-opacity="0.25"/>
+      <stop offset="70%" stop-color="#B17BFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="shadow-l" cx="0.02" cy="0.5" r="0.3">
+      <stop offset="0%" stop-color="#020103" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#020103" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="shadow-r" cx="0.98" cy="0.5" r="0.3">
+      <stop offset="0%" stop-color="#020103" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#020103" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="shadow-b" cx="0.50" cy="0.98" r="0.35">
+      <stop offset="0%" stop-color="#010102" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#010102" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="shadow-t" cx="0.50" cy="0.02" r="0.35">
+      <stop offset="0%" stop-color="#010102" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#010102" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="1" seed="6" stitchTiles="stitch" result="noise"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1920" height="1080" fill="url(#bg-linear)"/>
+  <rect width="1920" height="1080" fill="url(#glow-purple)" style="mix-blend-mode:screen"/>
+  <rect width="1920" height="1080" fill="url(#glow-rose)" style="mix-blend-mode:screen"/>
+  <rect width="1920" height="1080" fill="url(#glow-lilac)" style="mix-blend-mode:screen"/>
+  <rect width="1920" height="1080" fill="url(#shadow-l)"/>
+  <rect width="1920" height="1080" fill="url(#shadow-r)"/>
+  <rect width="1920" height="1080" fill="url(#shadow-b)"/>
+  <rect width="1920" height="1080" fill="url(#shadow-t)"/>
+
+  <!-- Decorative flowing lines -->
+  <g stroke="rgba(135,82,255,0.08)" stroke-width="1" fill="none">
+    <!-- Curved flowing lines from corners -->
+    <path d="M 0 200 Q 400 400 300 700 T 100 1080"/>
+    <path d="M 0 400 Q 500 500 400 800 T 200 1080"/>
+    <path d="M 1920 200 Q 1520 400 1620 700 T 1820 1080"/>
+    <path d="M 1920 400 Q 1420 500 1520 800 T 1720 1080"/>
+    
+    <!-- Diagonal accent lines -->
+    <path d="M 100 0 L 400 1080"/>
+    <path d="M 1820 0 L 1520 1080"/>
+  </g>
+  
+  <g stroke="rgba(255,115,175,0.05)" stroke-width="1" fill="none">
+    <path d="M 0 600 Q 600 400 960 540 T 1920 480"/>
+    <path d="M 0 700 Q 600 500 960 600 T 1920 550"/>
+  </g>
+
+  <g stroke="rgba(177,123,255,0.06)" stroke-width="1" fill="none">
+    <!-- Circular arcs -->
+    <circle cx="960" cy="540" r="400" stroke-dasharray="20 40"/>
+    <circle cx="960" cy="540" r="500" stroke-dasharray="10 50"/>
+  </g>
+
+  <!-- Subtle grid hints -->
+  <g stroke="rgba(255,255,255,0.02)" stroke-width="1">
+    <line x1="480" y1="0" x2="480" y2="1080"/>
+    <line x1="1440" y1="0" x2="1440" y2="1080"/>
+    <line x1="0" y1="270" x2="1920" y2="270"/>
+    <line x1="0" y1="810" x2="1920" y2="810"/>
+  </g>
+
+  <!-- SOLINK Logo with lines (top center) -->
+  <g transform="translate(960, 150)">
+    <line x1="-200" y1="-60" x2="-200" y2="60" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+    <line x1="200" y1="-60" x2="200" y2="60" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+    <line x1="-240" y1="-30" x2="240" y2="-30" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+    <line x1="-240" y1="30" x2="240" y2="30" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+    <text x="0" y="4" text-anchor="middle" dominant-baseline="middle" font-family="Space Grotesk, sans-serif" font-weight="500" font-size="52" letter-spacing="0.15em" fill="#FFFFFF">SOLINK</text>
+  </g>
+
+  <!-- Call to action text -->
+  <text x="960" y="300" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-weight="400" font-size="28" letter-spacing="0.1em" fill="rgba(255,255,255,0.7)">JOIN THE FUTURE OF WEB3 MESSAGING</text>
+
+  <!-- QR Code (center) -->
+  <g transform="translate(960, 560)">
+    <!-- QR frame with glow effect -->
+    <rect x="-135" y="-135" width="270" height="270" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(135,82,255,0.25)" stroke-width="1"/>
+    
+    <!-- QR Code for solink.chat (scaled and centered) -->
+    <g transform="translate(-100, -100) scale(8)">
+      <rect width="25" height="25" fill="#FFFFFF" rx="0.5"/>
+      <path stroke="#000000" stroke-width="1" d="M0 0.5h7m2 0h2m1 0h3m3 0h7M0 1.5h1m5 0h1m1 0h5m5 0h1m5 0h1M0 2.5h1m1 0h3m1 0h1m1 0h2m2 0h1m1 0h2m2 0h1m1 0h3m1 0h1M0 3.5h1m1 0h3m1 0h1m1 0h6m1 0h2m1 0h1m1 0h3m1 0h1M0 4.5h1m1 0h3m1 0h1m2 0h1m1 0h2m1 0h1m1 0h1m1 0h1m1 0h3m1 0h1M0 5.5h1m5 0h1m3 0h3m1 0h1m1 0h1m1 0h1m5 0h1M0 6.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M8 7.5h2m2 0h1m2 0h1M0 8.5h1m5 0h1m1 0h1m6 0h1m1 0h2m2 0h3M0 9.5h1m1 0h3m2 0h1m1 0h3m1 0h3m3 0h5M0 10.5h1m5 0h2m3 0h1m1 0h3m1 0h1m1 0h3m1 0h2M1 11.5h1m1 0h1m4 0h2m2 0h2m1 0h3m3 0h1m2 0h1M3 12.5h1m1 0h3m2 0h1m1 0h2m2 0h1m1 0h1m5 0h1M0 13.5h1m1 0h1m1 0h1m10 0h1m3 0h1m3 0h1M0 14.5h1m2 0h2m1 0h1m1 0h1m1 0h3m2 0h3m1 0h3m1 0h2M0 15.5h1m7 0h1m2 0h1m3 0h2m1 0h2m1 0h2m1 0h1M0 16.5h1m1 0h3m1 0h1m2 0h1m1 0h1m4 0h5m1 0h1M8 17.5h1m3 0h3m1 0h1m3 0h1M0 18.5h7m3 0h2m4 0h1m1 0h1m1 0h1m3 0h1M0 19.5h1m5 0h1m5 0h2m1 0h2m3 0h1m2 0h1M0 20.5h1m1 0h3m1 0h1m2 0h2m1 0h1m1 0h7m1 0h1m1 0h1M0 21.5h1m1 0h3m1 0h1m2 0h1m4 0h1m2 0h2m4 0h2M0 22.5h1m1 0h3m1 0h1m3 0h3m3 0h1m4 0h2m1 0h1M0 23.5h1m5 0h1m4 0h1m2 0h1m1 0h1m2 0h2m3 0h1M0 24.5h7m1 0h3m2 0h2m1 0h1m1 0h1m2 0h1m2 0h1"/>
+    </g>
+    
+    <!-- Scan hint -->
+    <text x="0" y="165" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-weight="300" font-size="14" fill="rgba(255,255,255,0.4)">Scan to open</text>
+  </g>
+
+  <!-- Subtle call to action below QR -->
+  <text x="960" y="800" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-weight="300" font-size="18" fill="rgba(255,255,255,0.5)">Connect your wallet and start messaging securely</text>
+
+  <!-- Website URL (bottom, semi-transparent) -->
+  <text x="960" y="980" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-weight="400" font-size="32" letter-spacing="0.2em" fill="rgba(255,255,255,0.25)">solink.chat</text>
+
+  <!-- Grain overlay -->
+  <rect width="1920" height="1080" filter="url(#grain)" opacity="0.25" style="mix-blend-mode:soft-light"/>
+</svg>
