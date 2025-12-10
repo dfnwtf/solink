@@ -1,4 +1,5 @@
 import nacl from "https://cdn.skypack.dev/tweetnacl@1.0.3?min";
+import { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "https://cdn.jsdelivr.net/npm/@solana/web3.js@1.91.5/+esm";
 import { createPopup } from "https://cdn.jsdelivr.net/npm/@picmo/popup-picker@5.8.5/+esm";
 import {
   initApp,
@@ -7,6 +8,7 @@ import {
   getWalletPubkey,
   isAuthenticated,
   getCurrentRoute,
+  getProviderInstance,
 } from "./main.js";
 import {
   sendMessage,
@@ -44,6 +46,8 @@ const MAX_MESSAGE_LENGTH = 2000;
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const NICKNAME_REGEX = /^[a-z0-9_.-]{3,24}$/;
 const PROFILE_LOOKUP_COOLDOWN_MS = 5 * 60 * 1000;
+const SOLANA_RPC_URL = window.SOLINK_RPC_URL || "https://api.mainnet-beta.solana.com";
+const solanaConnection = new Connection(SOLANA_RPC_URL, "confirmed");
 
 const state = {
   profile: null,
@@ -76,6 +80,7 @@ let pollLoopShouldRun = false;
 let pollLoopPromise = null;
 let pollAbortController = null;
 let emojiPicker = null;
+let isPaymentSubmitting = false;
 
 function sanitizeNamespace(value) {
   if (!value) return "guest";
@@ -178,6 +183,8 @@ function cacheDom() {
 
   ui.toast = document.querySelector("[data-role=\"toast\"]");
   ui.notificationAudio = document.querySelector("[data-role=\"notification-sound\"]");
+
+  updatePaymentControls();
 }
 
 function setActiveNav(target) {
@@ -319,9 +326,9 @@ function bindEvents() {
     ui.infoPanel?.classList.toggle("is-visible");
   });
 
-  ui.paymentSendButton?.addEventListener("click", () => {
-    showToast("SOL transfers coming soon");
-  });
+  ui.paymentAmount?.addEventListener("input", updatePaymentControls);
+  ui.paymentToken?.addEventListener("change", updatePaymentControls);
+  ui.paymentSendButton?.addEventListener("click", handleSendPayment);
 
   ui.messageInput?.addEventListener("input", handleMessageInput);
   ui.messageInput?.addEventListener("keydown", (event) => {
@@ -1177,9 +1184,7 @@ function toggleComposer(enabled) {
   if (!enabled && emojiPicker?.isOpen) {
     emojiPicker.close();
   }
-  if (ui.paymentSendButton) {
-    ui.paymentSendButton.disabled = !enabled || !state.activeContactKey;
-  }
+  updatePaymentControls();
 }
 
 function toggleConnectOverlay(visible) {
@@ -1187,13 +1192,112 @@ function toggleConnectOverlay(visible) {
   ui.connectOverlay.hidden = !visible;
 }
 
+function getPaymentAmountValue() {
+  if (!ui.paymentAmount) return 0;
+  const parsed = Number.parseFloat(ui.paymentAmount.value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function updatePaymentControls() {
+  if (!ui.paymentSendButton) return;
+  const hasContact = Boolean(state.activeContactKey);
+  const amount = getPaymentAmountValue();
+  const hasAmount = amount > 0;
+  const canSend = Boolean(hasContact && latestAppState?.isAuthenticated && hasAmount && !isPaymentSubmitting);
+  ui.paymentSendButton.disabled = !canSend;
+}
+
 function updatePaymentRecipient(pubkey) {
   if (ui.paymentRecipient) {
     ui.paymentRecipient.textContent = pubkey ? shortenPubkey(pubkey, 6) : "—";
   }
-  if (ui.paymentSendButton) {
-    const canSend = Boolean(pubkey && latestAppState?.isAuthenticated);
-    ui.paymentSendButton.disabled = !canSend;
+  updatePaymentControls();
+}
+
+async function handleSendPayment() {
+  if (isPaymentSubmitting) return;
+  if (!state.activeContactKey) {
+    showToast("Select a chat first");
+    return;
+  }
+  if (!latestAppState?.isAuthenticated) {
+    showToast("Connect wallet to send SOL");
+    return;
+  }
+  const amount = getPaymentAmountValue();
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showToast("Enter a valid amount");
+    return;
+  }
+  const lamports = Math.round(amount * LAMPORTS_PER_SOL);
+  if (lamports <= 0) {
+    showToast("Amount is too small");
+    return;
+  }
+  let toPubkey;
+  try {
+    toPubkey = new PublicKey(state.activeContactKey);
+  } catch {
+    showToast("Invalid recipient");
+    return;
+  }
+
+  const provider = getProviderInstance();
+  if (!provider?.publicKey) {
+    showToast("Wallet unavailable");
+    return;
+  }
+
+  try {
+    isPaymentSubmitting = true;
+    updatePaymentControls();
+    const fromPubkey = provider.publicKey;
+    const latestBlockhash = await solanaConnection.getLatestBlockhash();
+    const transaction = new Transaction({
+      recentBlockhash: latestBlockhash.blockhash,
+      feePayer: fromPubkey,
+    }).add(
+      SystemProgram.transfer({
+        fromPubkey,
+        toPubkey,
+        lamports,
+      }),
+    );
+
+    let signature;
+    if (typeof provider.signAndSendTransaction === "function") {
+      const result = await provider.signAndSendTransaction(transaction);
+      signature = typeof result === "string" ? result : result?.signature;
+    } else if (typeof provider.signTransaction === "function") {
+      const signed = await provider.signTransaction(transaction);
+      signature = await solanaConnection.sendRawTransaction(signed.serialize());
+    } else {
+      throw new Error("Wallet cannot send transactions");
+    }
+
+    if (!signature) {
+      throw new Error("Failed to send transaction");
+    }
+
+    showToast("Payment submitted");
+    await solanaConnection.confirmTransaction(
+      {
+        signature,
+        blockhash: latestBlockhash.blockhash,
+        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+      },
+      "confirmed",
+    );
+    showToast("Payment confirmed");
+    if (ui.paymentAmount) {
+      ui.paymentAmount.value = "";
+    }
+  } catch (error) {
+    console.error("Payment failed", error);
+    showToast(error.message || "Payment failed");
+  } finally {
+    isPaymentSubmitting = false;
+    updatePaymentControls();
   }
 }
 
