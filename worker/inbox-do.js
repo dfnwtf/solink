@@ -42,10 +42,13 @@ export class InboxDurable {
     return this.queueCache;
   }
 
+  // Возвращает true если что-то было удалено
   cleanupExpired() {
-    if (!this.queueCache) return;
+    if (!this.queueCache) return false;
     const now = Date.now();
+    const before = this.queueCache.length;
     this.queueCache = this.queueCache.filter((message) => !message?.expiresAt || message.expiresAt > now);
+    return this.queueCache.length !== before;
   }
 
   async persistQueue() {
@@ -58,20 +61,32 @@ export class InboxDurable {
     }
     await this.state.blockConcurrencyWhile(async () => {
       await this.loadQueue();
-      this.cleanupExpired();
+      const hadExpired = this.cleanupExpired();
       const exists = this.queueCache.some((item) => item.id === message.id);
+      
+      let added = false;
       if (!exists) {
         this.queueCache.push(message);
+        added = true;
       }
-      await this.persistQueue();
+      
+      // Пишем только если добавили сообщение ИЛИ удалили expired
+      if (added || hadExpired) {
+        await this.persistQueue();
+      }
     });
     return json({ ok: true });
   }
 
   async handlePull(limit) {
     await this.loadQueue();
-    this.cleanupExpired();
-    await this.persistQueue();
+    const hadExpired = this.cleanupExpired();
+    
+    // Пишем ТОЛЬКО если были удалены expired сообщения
+    if (hadExpired) {
+      await this.persistQueue();
+    }
+    
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, MAX_BATCH) : MAX_BATCH;
     const messages = this.queueCache.slice(0, safeLimit);
     return json({ messages });
@@ -87,8 +102,13 @@ export class InboxDurable {
     }
     await this.state.blockConcurrencyWhile(async () => {
       await this.loadQueue();
+      const before = this.queueCache.length;
       this.queueCache = this.queueCache.filter((message) => !idSet.has(message.id));
-      await this.persistQueue();
+      
+      // Пишем только если реально что-то удалили
+      if (this.queueCache.length !== before) {
+        await this.persistQueue();
+      }
     });
     return json({ ok: true });
   }

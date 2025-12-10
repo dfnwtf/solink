@@ -21,6 +21,8 @@
 
 > **We jumped ahead of our roadmap!** We're thrilled to announce that **real-time audio calls** are now live in SOLink. This is a huge milestone in the evolution of our messenger — bringing Web3 communication to a whole new level.
 
+- ✅ **SSL Labs audit upgraded to A** — TLS configuration hardened and re-tested
+
 ### 📞 Call Features
 - **1-on-1 Audio Calls** — Call any contact directly from chat
 - **Cloudflare TURN** — Reliable connectivity through NAT/firewalls
@@ -56,7 +58,7 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 |---------|--------|---------|
 | **Security Headers** | A+ | CSP, HSTS, X-Frame-Options |
 | **Mozilla Observatory** | A+ (125/100) | 10/10 tests passed |
-| **SSL Labs** | B | TLS 1.2/1.3 |
+| **SSL Labs** | A | TLS 1.2/1.3 |
 | **ImmuniWeb** | A | HTTPS, CSP verified |
 
 ### Encryption Stack

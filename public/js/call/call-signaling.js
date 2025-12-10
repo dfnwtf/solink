@@ -9,9 +9,11 @@ export class CallSignaling {
     this.roomId = null;
     this.participantId = null;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 3;
+    this.maxReconnectAttempts = 5; // Increased from 3 to 5
     this.pingInterval = null;
     this.intentionalClose = false; // Flag to prevent reconnect after intentional disconnect
+    this.reconnectDelay = 1000; // Start with 1 second delay
+    this.pendingMessages = []; // Queue messages during reconnect
     
     // Callbacks
     this.onOffer = options.onOffer || (() => {});
@@ -23,6 +25,7 @@ export class CallSignaling {
     this.onParticipantDisconnected = options.onParticipantDisconnected || (() => {});
     this.onConnected = options.onConnected || (() => {});
     this.onDisconnected = options.onDisconnected || (() => {});
+    this.onReconnecting = options.onReconnecting || (() => {});
     this.onError = options.onError || console.error;
   }
 
@@ -33,6 +36,9 @@ export class CallSignaling {
     return new Promise((resolve, reject) => {
       this.roomId = roomId;
       this.participantId = participantId;
+      
+      // Reset intentionalClose flag BEFORE connecting (in case of reconnect after previous call)
+      this.intentionalClose = false;
 
       // Use Cloudflare Worker directly for WebSocket (Hostinger doesn't proxy WebSocket)
       const workerHost = 'solink-worker.official-716.workers.dev';
@@ -45,8 +51,13 @@ export class CallSignaling {
       this.ws.onopen = () => {
         console.log('[Signaling] Connected');
         this.reconnectAttempts = 0;
+        this.reconnectDelay = 1000;
         this.intentionalClose = false; // Reset flag on new connection
         this.startPing();
+        
+        // Flush any pending messages
+        this.flushPendingMessages();
+        
         this.onConnected();
         resolve();
       };
@@ -57,14 +68,36 @@ export class CallSignaling {
         this.onDisconnected(event);
         
         // Attempt reconnect only for abnormal closures and if not intentionally closed
-        if (!this.intentionalClose && event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
+        // Code 1006 = abnormal closure (network issue), 1001 = going away
+        const shouldReconnect = !this.intentionalClose && 
+          event.code !== 1000 && 
+          this.reconnectAttempts < this.maxReconnectAttempts;
+          
+        if (shouldReconnect) {
           this.reconnectAttempts++;
-          console.log(`[Signaling] Reconnecting (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-          setTimeout(() => this.connect(roomId, participantId), 1000 * this.reconnectAttempts);
+          // Exponential backoff with jitter
+          const delay = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 10000);
+          const jitter = Math.random() * 500;
+          
+          console.log(`[Signaling] Reconnecting (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${Math.round(delay)}ms...`);
+          this.onReconnecting({ attempt: this.reconnectAttempts, maxAttempts: this.maxReconnectAttempts });
+          
+          setTimeout(() => {
+            if (!this.intentionalClose) {
+              this.connect(roomId, participantId).catch(err => {
+                console.error('[Signaling] Reconnect failed:', err);
+              });
+            }
+          }, delay + jitter);
         }
       };
 
       this.ws.onerror = (error) => {
+        // Don't treat page unload interruptions as errors
+        if (document.readyState !== 'complete' || document.hidden) {
+          console.log('[Signaling] WebSocket error during page transition, ignoring');
+          return;
+        }
         console.error('[Signaling] Error:', error);
         this.onError(error);
         reject(error);
@@ -179,24 +212,57 @@ export class CallSignaling {
   }
 
   /**
-   * Send message to server
+   * Send message to server (with queue for reconnect scenarios)
    */
   send(message) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     } else {
-      console.warn('[Signaling] Cannot send, WebSocket not open');
+      // Queue important messages (not ping) for retry after reconnect
+      if (message.type !== 'ping') {
+        console.warn('[Signaling] WebSocket not open, queuing message:', message.type);
+        this.pendingMessages.push(message);
+        
+        // Limit queue size
+        if (this.pendingMessages.length > 20) {
+          this.pendingMessages.shift();
+        }
+      }
+    }
+  }
+  
+  /**
+   * Flush pending messages after reconnect
+   */
+  flushPendingMessages() {
+    if (this.pendingMessages.length > 0) {
+      console.log(`[Signaling] Flushing ${this.pendingMessages.length} pending messages`);
+      const messages = [...this.pendingMessages];
+      this.pendingMessages = [];
+      
+      for (const message of messages) {
+        this.send(message);
+      }
     }
   }
 
   /**
    * Start ping interval for keep-alive
+   * Cloudflare Workers WebSocket has ~30s idle timeout, so ping every 10s to be safe
    */
   startPing() {
     this.stopPing();
+    // Send ping immediately
+    this.send({ type: 'ping' });
+    
     this.pingInterval = setInterval(() => {
-      this.send({ type: 'ping' });
-    }, 30000); // Ping every 30 seconds
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.send({ type: 'ping' });
+        console.log('[Signaling] Ping sent');
+      } else {
+        console.warn('[Signaling] WebSocket not open during ping, state:', this.ws?.readyState);
+      }
+    }, 10000); // Ping every 10 seconds (CF idle timeout is ~30s)
   }
 
   /**
@@ -214,6 +280,27 @@ export class CallSignaling {
    */
   isConnected() {
     return this.ws && this.ws.readyState === WebSocket.OPEN;
+  }
+  
+  /**
+   * Check if WebSocket is in a stale state (CLOSING or CLOSED but not intentionally)
+   */
+  isStale() {
+    if (!this.ws) return false;
+    // CLOSING = 2, CLOSED = 3
+    return (this.ws.readyState === 2 || this.ws.readyState === 3) && !this.intentionalClose;
+  }
+  
+  /**
+   * Force reconnect if connection is stale
+   */
+  async ensureConnected() {
+    if (this.isStale() && this.roomId && this.participantId) {
+      console.log('[Signaling] Connection is stale, forcing reconnect');
+      this.ws = null;
+      this.reconnectAttempts = 0;
+      await this.connect(this.roomId, this.participantId);
+    }
   }
 
   /**

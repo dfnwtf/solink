@@ -6,6 +6,8 @@ import { CallSignalingDurable } from './call-do';
 import { logEvent, Category, EventType } from './utils/logger';
 
 const SESSION_PREFIX = 'session:';
+const MOBILE_AUTH_PREFIX = 'mobile-auth:';
+const MOBILE_AUTH_TTL_SECONDS = 5 * 60; // 5 minutes for challenge validity
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60; // 1 hour default
 const MIN_SESSION_TTL_SECONDS = 15 * 60; // 15 minutes minimum
 const MAX_SESSION_TTL_SECONDS = 12 * 60 * 60; // 12 hours maximum
@@ -407,6 +409,10 @@ export default {
         return handleNonceRequest(request, url, env);
       case '/api/auth/verify':
         return handleVerifyRequest(request, env);
+      case '/api/auth/mobile/init':
+        return handleMobileAuthInit(request, env);
+      case '/api/auth/mobile/verify':
+        return handleMobileAuthVerify(request, env);
       case '/api/messages/send':
         return handleSendMessage(request, env);
       case '/api/messages/ack':
@@ -548,6 +554,105 @@ async function handleVerifyRequest(request, env) {
   
   await logEvent(env, { type: EventType.INFO, category: Category.AUTH, action: 'verify', wallet: pubkey, latency: Date.now() - startTime, status: 200 });
   
+  return jsonResponse(request, {
+    token,
+    user: { pubkey },
+  });
+}
+
+// Mobile Auth Init - Step 1: Generate challenge for dapp_public_key
+async function handleMobileAuthInit(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const body = await readJson(request);
+  if (!body) {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'mobile-init', details: 'invalid json', status: 400 });
+    return errorResponse(request, 'Invalid JSON payload');
+  }
+
+  const { dappPublicKey } = body;
+  if (!dappPublicKey || typeof dappPublicKey !== 'string' || dappPublicKey.length < 32) {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'mobile-init', details: 'invalid dappPublicKey', status: 400 });
+    return errorResponse(request, 'Invalid dappPublicKey');
+  }
+
+  // Generate challenge
+  const challenge = generateToken(24);
+  
+  // Store challenge with dappPublicKey as key
+  const kvKey = `${MOBILE_AUTH_PREFIX}${dappPublicKey}`;
+  await env.SOLINK_KV.put(kvKey, JSON.stringify({ challenge, createdAt: Date.now() }), {
+    expirationTtl: MOBILE_AUTH_TTL_SECONDS,
+  });
+
+  logEvent(env, { type: EventType.INFO, category: Category.AUTH, action: 'mobile-init', details: 'challenge issued', status: 200 });
+
+  return jsonResponse(request, { challenge });
+}
+
+// Mobile Auth Verify - Step 2: Verify challenge and create session
+async function handleMobileAuthVerify(request, env) {
+  const startTime = Date.now();
+
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const body = await readJson(request);
+  if (!body) {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'mobile-verify', details: 'invalid json', status: 400 });
+    return errorResponse(request, 'Invalid JSON payload');
+  }
+
+  const { pubkey, dappPublicKey, challenge, sessionTtl } = body;
+  
+  if (!pubkey || !dappPublicKey || !challenge) {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'mobile-verify', details: 'missing fields', status: 400 });
+    return errorResponse(request, 'Missing required fields');
+  }
+
+  // Validate pubkey format
+  if (!BASE58_REGEX.test(pubkey)) {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'mobile-verify', details: 'invalid pubkey format', status: 400 });
+    return errorResponse(request, 'Invalid pubkey format');
+  }
+
+  // Retrieve and validate challenge
+  const kvKey = `${MOBILE_AUTH_PREFIX}${dappPublicKey}`;
+  const storedData = await env.SOLINK_KV.get(kvKey);
+  
+  if (!storedData) {
+    logEvent(env, { type: EventType.WARN, category: Category.AUTH, action: 'mobile-verify', wallet: pubkey, details: 'challenge not found or expired', status: 401 });
+    return errorResponse(request, 'Challenge not found or expired', 401);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(storedData);
+  } catch {
+    logEvent(env, { type: EventType.ERROR, category: Category.AUTH, action: 'mobile-verify', details: 'invalid stored data', status: 500 });
+    return errorResponse(request, 'Internal error', 500);
+  }
+
+  if (parsed.challenge !== challenge) {
+    logEvent(env, { type: EventType.WARN, category: Category.AUTH, action: 'mobile-verify', wallet: pubkey, details: 'challenge mismatch', status: 401 });
+    return errorResponse(request, 'Invalid challenge', 401);
+  }
+
+  // Delete challenge (one-time use)
+  await env.SOLINK_KV.delete(kvKey);
+
+  // Create session
+  const ttlSeconds = typeof sessionTtl === 'number' && sessionTtl > 0 
+    ? sessionTtl 
+    : DEFAULT_SESSION_TTL_SECONDS;
+  
+  const token = await createSession(env.SOLINK_KV, pubkey, ttlSeconds);
+
+  await logEvent(env, { type: EventType.INFO, category: Category.AUTH, action: 'mobile-verify', wallet: pubkey, latency: Date.now() - startTime, status: 200 });
+
   return jsonResponse(request, {
     token,
     user: { pubkey },

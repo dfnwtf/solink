@@ -214,6 +214,38 @@ export async function verifySignature({ pubkey, nonce, signature }) {
   return result;
 }
 
+// Mobile Auth - Step 1: Initialize auth flow with dapp public key
+export async function initMobileAuth(dappPublicKey) {
+  if (!dappPublicKey) {
+    throw new Error('Missing dappPublicKey');
+  }
+  return request('/auth/mobile/init', {
+    method: 'POST',
+    body: JSON.stringify({ dappPublicKey }),
+  });
+}
+
+// Mobile Auth - Step 2: Verify and create session
+export async function verifyMobileAuth({ pubkey, dappPublicKey, challenge }) {
+  if (!pubkey || !dappPublicKey || !challenge) {
+    throw new Error('Missing mobile auth data');
+  }
+
+  const sessionDurationMs = getSessionDurationMs();
+  const sessionDurationSeconds = Math.floor(sessionDurationMs / 1000);
+
+  const result = await request('/auth/mobile/verify', {
+    method: 'POST',
+    body: JSON.stringify({ pubkey, dappPublicKey, challenge, sessionTtl: sessionDurationSeconds }),
+  });
+
+  if (result?.token) {
+    setSessionToken(result.token, pubkey, sessionDurationMs);
+  }
+
+  return result;
+}
+
 export async function sendMessage({ to, text, ciphertext, nonce, version, timestamp, tokenPreview, senderEncryptionKey, voiceKey, voiceDuration, voiceNonce, voiceMimeType, voiceWaveform }) {
   if (!to) {
     throw new Error('Missing recipient');
