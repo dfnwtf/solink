@@ -21,7 +21,7 @@
 
 > **We jumped ahead of our roadmap!** We're thrilled to announce that **real-time audio calls** are now live in SOLink. This is a huge milestone in the evolution of our messenger — bringing Web3 communication to a whole new level.
 
-- ✅ **SSL Labs audit upgraded to A** — TLS configuration hardened and re-tested
+- ✅ **SSL Labs audit upgraded to A** - TLS configuration hardened and re-tested
 
 ### 📞 Call Features
 - **1-on-1 Audio Calls** — Call any contact directly from chat
