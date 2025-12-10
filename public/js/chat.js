@@ -1,5 +1,11 @@
 import nacl from "https://cdn.skypack.dev/tweetnacl@1.0.3?min";
-import { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "https://cdn.jsdelivr.net/npm/@solana/web3.js@1.91.5/+esm";
+import {
+  Connection,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  LAMPORTS_PER_SOL,
+} from "https://cdn.jsdelivr.net/npm/@solana/web3.js@1.91.5/lib/index.browser.esm.js";
 import { createPopup } from "https://cdn.jsdelivr.net/npm/@picmo/popup-picker@5.8.5/+esm";
 import {
   initApp,
