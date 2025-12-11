@@ -6,6 +6,7 @@ import {
   Transaction,
   LAMPORTS_PER_SOL,
 } from "https://cdn.jsdelivr.net/npm/@solana/web3.js@1.91.5/lib/index.browser.esm.js";
+import { Buffer } from "https://cdn.jsdelivr.net/npm/buffer@6.0.3/index-esm.js";
 import { createPopup } from "https://cdn.jsdelivr.net/npm/@picmo/popup-picker@5.8.5/+esm";
 import {
   initApp,
@@ -54,6 +55,7 @@ const NICKNAME_REGEX = /^[a-z0-9_.-]{3,24}$/;
 const PROFILE_LOOKUP_COOLDOWN_MS = 5 * 60 * 1000;
 const SOLANA_RPC_URL = window.SOLINK_RPC_URL || "https://api.mainnet-beta.solana.com";
 const solanaConnection = new Connection(SOLANA_RPC_URL, "confirmed");
+window.Buffer = window.Buffer || Buffer;
 
 const state = {
   profile: null,
