@@ -10,6 +10,7 @@ kv_namespaces = [
 
 [vars]
 CORS_ALLOW_ORIGIN = "https://solink.chat"
+SOLANA_RPC_URL = "https://rpc.helius.xyz/?api-key=b8c083c8-b6ca-45d3-9672-b6dcc03769f0"
 
 [durable_objects]
 bindings = [

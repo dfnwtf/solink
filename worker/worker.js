@@ -96,6 +96,132 @@ async function inboxAck(env, pubkey, ids) {
   await callInbox(env, pubkey, { action: 'ack', ids });
 }
 
+const DEFAULT_SOLANA_HTTP_ENDPOINTS = [
+  'https://api.mainnet-beta.solana.com',
+  'https://solana-api.projectserum.com',
+  'https://rpc.ankr.com/solana',
+];
+const DEFAULT_SOLANA_WS_ENDPOINT = 'wss://api.mainnet-beta.solana.com';
+
+function parseEndpointList(raw) {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function httpEndpoints(env) {
+  const list = parseEndpointList(env.SOLANA_RPC_URL);
+  return list.length ? list : DEFAULT_SOLANA_HTTP_ENDPOINTS;
+}
+
+function deriveWsUrl(value) {
+  if (!value) return null;
+  if (value.startsWith('wss://') || value.startsWith('ws://')) {
+    return value;
+  }
+  if (value.startsWith('https://')) {
+    return `wss://${value.slice(8)}`;
+  }
+  if (value.startsWith('http://')) {
+    return `ws://${value.slice(7)}`;
+  }
+  return null;
+}
+
+function wsEndpoint(env) {
+  const list = parseEndpointList(env.SOLANA_WS_RPC_URL);
+  if (list.length) {
+    const direct = deriveWsUrl(list[0]);
+    if (direct) return direct;
+  }
+  const httpList = httpEndpoints(env);
+  for (const endpoint of httpList) {
+    const ws = deriveWsUrl(endpoint);
+    if (ws) return ws;
+  }
+  return DEFAULT_SOLANA_WS_ENDPOINT;
+}
+
+async function handleSolanaProxy(request, env) {
+  if (request.method !== 'POST') {
+    return errorResponse(env, 'Method Not Allowed', 405);
+  }
+
+  const endpoints = httpEndpoints(env);
+
+  let body;
+
+  try {
+    body = await request.text();
+  } catch {
+    return errorResponse(env, 'Invalid request body', 400);
+  }
+
+  let lastError = null;
+
+  for (const endpoint of endpoints) {
+    try {
+      const upstream = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            request.headers.get('Content-Type') || 'application/json',
+          Accept: 'application/json',
+        },
+        body,
+      });
+
+      if (upstream.ok) {
+        const headers = {
+          ...buildCorsHeaders(env),
+          'Cache-Control': 'no-store',
+          'Content-Type':
+            upstream.headers.get('Content-Type') ||
+            'application/json;charset=UTF-8',
+        };
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers,
+        });
+      }
+
+      const text = await upstream.text().catch(() => '');
+      lastError = `RPC ${endpoint} responded with ${upstream.status} ${text}`;
+      console.warn('Solana RPC proxy warning:', lastError);
+    } catch (error) {
+      lastError = `RPC ${endpoint} error: ${error.message}`;
+      console.warn('Solana RPC proxy warning:', lastError);
+    }
+  }
+
+  console.error('Solana RPC proxy failed:', lastError);
+  return errorResponse(env, `Solana RPC proxy failed: ${lastError}`, 502);
+}
+
+function wsToHttp(urlString) {
+  const url = new URL(urlString);
+  if (url.protocol === 'wss:') {
+    url.protocol = 'https:';
+  } else if (url.protocol === 'ws:') {
+    url.protocol = 'http:';
+  }
+  return url.toString();
+}
+
+async function handleSolanaWebSocketProxy(request, env) {
+  const targetWs = wsEndpoint(env);
+  if (!targetWs) {
+    return new Response('Solana WS endpoint missing', { status: 502 });
+  }
+
+  const upstreamUrl = wsToHttp(targetWs);
+  const upstreamRequest = new Request(upstreamUrl, request);
+  return fetch(upstreamRequest);
+}
+
 async function getSessionPubkey(kvNamespace, token) {
   if (!token) return null;
   const payload = await kvNamespace.get(sessionKey(token));
@@ -183,6 +309,14 @@ export default {
       });
     }
 
+    const upgradeHeader = request.headers.get('Upgrade') || '';
+    if (
+      url.pathname === '/api/solana' &&
+      upgradeHeader.toLowerCase() === 'websocket'
+    ) {
+      return handleSolanaWebSocketProxy(request, env);
+    }
+
     if (!url.pathname.startsWith('/api/')) {
       return new Response('Not Found', { status: 404 });
     }
@@ -208,6 +342,8 @@ export default {
         return handleProfileLookup(request, url, env);
       case '/api/profile/by-key':
         return handleProfileByKey(request, url, env);
+      case '/api/solana':
+        return handleSolanaProxy(request, env);
       default:
         return new Response('Not Found', { status: 404 });
     }
