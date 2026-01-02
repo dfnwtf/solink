@@ -53,16 +53,17 @@ const MAX_MESSAGE_LENGTH = 2000;
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const NICKNAME_REGEX = /^[a-z0-9_.-]{3,24}$/;
 const PROFILE_LOOKUP_COOLDOWN_MS = 5 * 60 * 1000;
-const hasWindow = typeof window !== 'undefined';
-const isLocalhost =
-  hasWindow && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const hasWindow = typeof window !== "undefined";
+const isLocalhost = hasWindow && ["localhost", "127.0.0.1"].includes(window.location.hostname);
 const DEFAULT_SOLANA_RPC = isLocalhost
-  ? 'https://api.mainnet-beta.solana.com'
+  ? "https://api.mainnet-beta.solana.com"
   : hasWindow
-    ? new URL('/api/solana', window.location.origin).toString()
-    : 'https://api.mainnet-beta.solana.com';
+    ? new URL("/api/solana", window.location.origin).toString()
+    : "https://api.mainnet-beta.solana.com";
+const PAYMENT_SYSTEM_PREFIX = "__SOLINK_PAYMENT__";
+const SOLANA_EXPLORER_TX = "https://explorer.solana.com/tx/";
 const SOLANA_RPC_URL = window.SOLINK_RPC_URL || DEFAULT_SOLANA_RPC;
-const solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
+const solanaConnection = new Connection(SOLANA_RPC_URL, "confirmed");
 window.Buffer = window.Buffer || Buffer;
 
 const state = {
@@ -552,6 +553,64 @@ function shortenPubkey(value, visible = 4) {
   return `${value.slice(0, visible)}…${value.slice(-visible)}`;
 }
 
+function getContactDisplayName(pubkey, fallbackShort = true) {
+  if (!pubkey) return "";
+  const contact = state.contacts.find((item) => item.pubkey === pubkey);
+  if (contact?.localName) {
+    return contact.localName;
+  }
+  if (contact?.displayName) {
+    return contact.displayName;
+  }
+  return fallbackShort ? shortenPubkey(pubkey, 6) : pubkey;
+}
+
+function formatSolAmount(lamports) {
+  if (!Number.isFinite(lamports)) return "0";
+  const sol = lamports / LAMPORTS_PER_SOL;
+  const options = {
+    maximumFractionDigits: sol >= 1 ? 2 : 4,
+    minimumFractionDigits: sol >= 1 ? 0 : 2,
+  };
+  return sol.toLocaleString(undefined, options);
+}
+
+function buildPaymentSystemText(payload) {
+  return `${PAYMENT_SYSTEM_PREFIX}:${JSON.stringify(payload)}`;
+}
+
+function parsePaymentSystemMessage(text) {
+  if (typeof text !== "string") return null;
+  const prefix = `${PAYMENT_SYSTEM_PREFIX}:`;
+  if (!text.startsWith(prefix)) return null;
+  try {
+    const parsed = JSON.parse(text.slice(prefix.length));
+    if (parsed && Number.isFinite(parsed.lamports) && parsed.from && parsed.to) {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn("Failed to parse payment system message", error);
+  }
+  return null;
+}
+
+function ensurePaymentMeta(message) {
+  if (!message) return null;
+  if (message.meta?.systemType === "payment" && message.meta?.payment) {
+    return message.meta.payment;
+  }
+  const parsed = parsePaymentSystemMessage(message.text || "");
+  if (parsed) {
+    message.meta = {
+      ...(message.meta || {}),
+      systemType: "payment",
+      payment: parsed,
+    };
+    return parsed;
+  }
+  return null;
+}
+
 function normalizeNicknameInput(value) {
   if (!value) return "";
   return String(value).trim().replace(/^@+/, "").toLowerCase();
@@ -949,6 +1008,20 @@ function truncateText(text, limit) {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
+function getMessagePreviewText(message) {
+  if (!message) return "";
+  const payment = ensurePaymentMeta(message);
+  if (payment) {
+    const amountLabel = formatSolAmount(payment.lamports);
+    const counterparty = message.direction === "out" ? payment.to : payment.from;
+    const name = getContactDisplayName(counterparty);
+    return message.direction === "out"
+      ? `You sent ${amountLabel} SOL to ${name}`
+      : `${name} sent you ${amountLabel} SOL`;
+  }
+  return truncateText(message.text || "", 48);
+}
+
 function createContactElement(contact) {
   const item = document.createElement("button");
   item.type = "button";
@@ -972,9 +1045,14 @@ function createContactElement(contact) {
 
   const previewEl = document.createElement("div");
   previewEl.className = "chat-item__preview";
-  previewEl.textContent = contact.lastMessage
-    ? `${contact.lastMessage.direction === "out" ? "You: " : ""}${truncateText(contact.lastMessage.text || "", 48)}`
-    : "No messages yet";
+  if (contact.lastMessage) {
+    const preview = getMessagePreviewText(contact.lastMessage);
+    const isSystem = Boolean(contact.lastMessage.meta?.systemType);
+    previewEl.textContent =
+      contact.lastMessage.direction === "out" && !isSystem ? `You: ${preview}` : preview;
+  } else {
+    previewEl.textContent = "No messages yet";
+  }
 
   meta.appendChild(nameEl);
   meta.appendChild(previewEl);
@@ -1142,6 +1220,10 @@ function renderMessages(pubkey) {
 }
 
 function createMessageBubble(message, highlightQueryText) {
+  if (ensurePaymentMeta(message)) {
+    return createPaymentBubble(message);
+  }
+
   const bubble = document.createElement("div");
   bubble.className = `bubble bubble--${message.direction === "out" ? "out" : "in"}`;
   bubble.dataset.messageId = message.id;
@@ -1165,6 +1247,43 @@ function createMessageBubble(message, highlightQueryText) {
     status.className = "bubble__status";
     status.textContent = message.status || "sent";
     meta.appendChild(status);
+  }
+
+  bubble.appendChild(textEl);
+  bubble.appendChild(meta);
+  return bubble;
+}
+
+function createPaymentBubble(message) {
+  const payment = ensurePaymentMeta(message);
+  const bubble = document.createElement("div");
+  bubble.className = "bubble bubble--system";
+  bubble.dataset.messageId = message.id;
+
+  const amountLabel = formatSolAmount(payment.lamports);
+  const counterpartyName =
+    message.direction === "out"
+      ? payment.toName || shortenPubkey(payment.to, 6)
+      : payment.fromName || shortenPubkey(payment.from, 6);
+  const textEl = document.createElement("div");
+  textEl.className = "bubble__text";
+  textEl.textContent =
+    message.direction === "out"
+      ? `You sent ${amountLabel} SOL to ${counterpartyName}`
+      : `${counterpartyName} sent you ${amountLabel} SOL`;
+
+  const meta = document.createElement("div");
+  meta.className = "bubble__meta bubble__meta--system";
+  meta.textContent = formatTime(message.timestamp);
+
+  if (payment.signature) {
+    const link = document.createElement("a");
+    link.href = `${SOLANA_EXPLORER_TX}${payment.signature}`;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.className = "bubble__link";
+    link.textContent = "View transaction";
+    meta.appendChild(link);
   }
 
   bubble.appendChild(textEl);
@@ -1230,6 +1349,56 @@ function updatePaymentRecipient(pubkey) {
   updatePaymentControls();
 }
 
+async function sendSystemPaymentMessage({ lamports, fromPubkey, toPubkey, signature }) {
+  if (!state.activeContactKey) return;
+  const timestamp = Date.now();
+  const paymentMeta = {
+    lamports,
+    from: fromPubkey,
+    to: toPubkey,
+    fromName: getContactDisplayName(fromPubkey) || shortenPubkey(fromPubkey, 6),
+    toName: getContactDisplayName(toPubkey) || shortenPubkey(toPubkey, 6),
+    signature,
+  };
+  const text = buildPaymentSystemText(paymentMeta);
+  const message = {
+    id: crypto.randomUUID(),
+    contactKey: state.activeContactKey,
+    direction: "out",
+    text,
+    timestamp,
+    status: "sending",
+    meta: {
+      systemType: "payment",
+      payment: paymentMeta,
+    },
+  };
+
+  await addMessage(message);
+  appendMessageToState(state.activeContactKey, message);
+  renderMessages(state.activeContactKey);
+
+  try {
+    await sendMessage({
+      to: state.activeContactKey,
+      text,
+      timestamp,
+    });
+    await setMessageStatus(message.id, "sent");
+    const delivered = { ...message, status: "sent" };
+    appendMessageToState(state.activeContactKey, delivered);
+    renderMessages(state.activeContactKey);
+    updateContactPreviewFromMessage(state.activeContactKey, delivered);
+    triggerImmediatePoll();
+  } catch (error) {
+    console.error("Payment notification failed", error);
+    await setMessageStatus(message.id, "failed");
+    appendMessageToState(state.activeContactKey, { ...message, status: "failed" });
+    renderMessages(state.activeContactKey);
+    showToast("Payment sent, but notification could not be delivered");
+  }
+}
+
 async function handleSendPayment() {
   if (isPaymentSubmitting) return;
   if (!state.activeContactKey) {
@@ -1263,11 +1432,13 @@ async function handleSendPayment() {
     showToast("Wallet unavailable");
     return;
   }
+  const fromPubkey = provider.publicKey;
+  const fromPubkeyString = fromPubkey.toBase58();
+  const toPubkeyString = toPubkey.toBase58();
 
   try {
     isPaymentSubmitting = true;
     updatePaymentControls();
-    const fromPubkey = provider.publicKey;
     const latestBlockhash = await solanaConnection.getLatestBlockhash();
     const transaction = new Transaction({
       recentBlockhash: latestBlockhash.blockhash,
@@ -1308,6 +1479,12 @@ async function handleSendPayment() {
     if (ui.paymentAmount) {
       ui.paymentAmount.value = "";
     }
+    await sendSystemPaymentMessage({
+      lamports,
+      fromPubkey: fromPubkeyString,
+      toPubkey: toPubkeyString,
+      signature,
+    });
   } catch (error) {
     console.error("Payment failed", error);
     showToast(error.message || "Payment failed");
@@ -1546,6 +1723,7 @@ async function handleIncomingMessages(messages) {
       }
     }
 
+    const systemMeta = parsePaymentSystemMessage(displayText);
     const message = {
       id: messageId || crypto.randomUUID(),
       contactKey: from,
@@ -1556,6 +1734,12 @@ async function handleIncomingMessages(messages) {
       meta: {
         encryption: encryptionMeta,
         ciphertext,
+        ...(systemMeta
+          ? {
+              systemType: "payment",
+              payment: systemMeta,
+            }
+          : {}),
       },
     };
 

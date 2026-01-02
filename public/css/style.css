@@ -638,6 +638,20 @@ button:disabled {
   border-color: rgba(163, 109, 255, 0.45);
 }
 
+.bubble--system {
+  align-self: center;
+  max-width: min(90%, 520px);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  color: var(--text-primary);
+  text-align: center;
+  box-shadow: none;
+}
+
+.bubble--system .bubble__text {
+  font-weight: 600;
+}
+
 .bubble__text {
   font-size: 0.95rem;
   line-height: 1.55;
@@ -659,11 +673,24 @@ button:disabled {
   align-self: flex-end;
 }
 
+.bubble__meta--system {
+  justify-content: center;
+}
+
 .bubble__status {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
   text-transform: capitalize;
+}
+
+.bubble__link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.bubble__link:hover {
+  text-decoration: underline;
 }
 
 .bubble__status::before {
