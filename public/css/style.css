@@ -460,6 +460,11 @@ button:disabled {
   gap: 0.45rem;
   padding-right: 0.25rem;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+.chat-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .chat-item {
@@ -611,6 +616,11 @@ button:disabled {
   padding: 1.8rem 2.3rem;
   overflow-y: auto;
   background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.08), transparent 55%), var(--surface-1);
+  scrollbar-width: none;
+}
+.timeline::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .timeline__day {
@@ -731,6 +741,11 @@ button:disabled {
   color: inherit;
   font-size: 0.95rem;
   line-height: 1.55;
+  scrollbar-width: none;
+}
+.composer__input::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .composer__toolbar {
