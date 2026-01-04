@@ -623,6 +623,19 @@ button:disabled {
   height: 0;
 }
 
+.timeline-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 1rem;
+  color: var(--text-muted);
+  padding: 2rem;
+  pointer-events: none;
+}
+
 .timeline__day {
   align-self: center;
   padding: 0.35rem 0.85rem;
@@ -1179,6 +1192,10 @@ button:disabled {
 
 .icon-emoji {
   mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9a9 9 0 0 0-9-9Zm-3 6a1 1 0 1 1-1 1a1 1 0 0 1 1-1Zm6 6H9a3 3 0 0 1 6 0Zm0-5a1 1 0 1 1 1 1a1 1 0 0 1-1-1Z"/></svg>');
+}
+
+.icon-close {
+  mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="m18.3 5.71l-6.29 6.29l-6.3-6.3l-1.41 1.42l6.29 6.29l-6.29 6.29l1.41 1.41l6.3-6.29l6.29 6.29l1.41-1.41L13.41 13l6.29-6.29z"/></svg>');
 }
 
 /* RESPONSIVE -------------------------------------------------- */
