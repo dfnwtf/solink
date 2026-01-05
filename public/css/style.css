@@ -309,12 +309,18 @@ button:disabled {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.search-field:focus-within {
+  border-color: rgba(140, 91, 255, 0.8);
+  box-shadow: 0 0 0 1px rgba(140, 91, 255, 0.35);
+}
+
 .search-field input {
   background: transparent;
   border: none;
   width: 100%;
   color: inherit;
   font-size: 0.9rem;
+  outline: none;
 }
 
 .search-field--compact {
@@ -757,6 +763,11 @@ button:disabled {
   font-size: 0.95rem;
   line-height: 1.55;
   scrollbar-width: none;
+  outline: none;
+}
+.composer__input:focus {
+  border-color: rgba(140, 91, 255, 0.8);
+  box-shadow: 0 0 0 1px rgba(140, 91, 255, 0.3);
 }
 .composer__input::-webkit-scrollbar {
   width: 0;
@@ -861,6 +872,11 @@ button:disabled {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.payment-field__control:focus-within {
+  border-color: rgba(140, 91, 255, 0.65);
+  box-shadow: 0 0 0 1px rgba(140, 91, 255, 0.25);
+}
+
 .payment-field__control input,
 .payment-field__control select {
   border: none;
@@ -871,11 +887,13 @@ button:disabled {
 
 .payment-field__control input {
   width: 100%;
+  outline: none;
 }
 
 .payment-field__control select {
   font-weight: 600;
   color: var(--text-primary);
+  outline: none;
 }
 
 .info-panel__notice {
