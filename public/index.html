@@ -1,31 +1,334 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SOLink — Anonymous Solana Messenger</title>
+    <title>SOLink — Background</title>
     <link rel="stylesheet" href="./css/style.css" />
   </head>
-  <body class="landing">
-    <header class="landing-header">
-      <h1>SOLink</h1>
-      <p>wallet-to-wallet private messaging on Solana</p>
-    </header>
-
-    <main class="landing-content">
-      <section class="landing-card">
-        <h2>Anonymous. Ephemeral. Yours.</h2>
-        <ul>
-          <li>No email, phone, or usernames</li>
-          <li>Messages live only in your wallet inbox</li>
-          <li>Your history stays on your device</li>
-        </ul>
-        <a class="primary-button" href="./app.html">Open Messenger</a>
+  <body class="landing landing--blank">
+    <div class="hero-nav">
+      <div class="hero-nav__actions">
+        <a class="callout-button" href="./app.html">Open Messenger</a>
+        <a class="callout-button callout-button--accent" href="https://pump.fun" target="_blank" rel="noreferrer"
+          >Buy $SOLINK</a
+        >
+      </div>
+    </div>
+    <div class="galxe-bg">
+      <div class="galxe-bg__frame">
+        <span class="galxe-bg__frame-line galxe-bg__frame-line--top"></span>
+        <span class="galxe-bg__frame-line galxe-bg__frame-line--bottom"></span>
+        <span class="galxe-bg__frame-line galxe-bg__frame-line--left"></span>
+        <span class="galxe-bg__frame-line galxe-bg__frame-line--right"></span>
+      </div>
+      <h1 class="galxe-bg__title" aria-label="SOLINK">
+        <span>S</span>
+        <span>O</span>
+        <span>L</span>
+        <span>I</span>
+        <span>N</span>
+        <span>K</span>
+      </h1>
+      <section class="hero-copy">
+        <div>
+          <p class="hero-copy__eyebrow">SOLink</p>
+          <h2>Your Web3 Communication Layer</h2>
+          <p class="hero-copy__lead">Private. Wallet-Native. End-to-End Encrypted.</p>
+        </div>
+        <div class="hero-copy__actions">
+          <a class="cta-button cta-button--primary" href="./app.html">Open Messenger</a>
+          <a class="cta-button cta-button--secondary" href="#token">What is SOLINK?</a>
+        </div>
       </section>
-    </main>
+      <div class="social-bar">
+        <a class="social-bar__item" href="https://github.com" target="_blank" rel="noreferrer">
+          <span class="sr-only">GitHub</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 499.368" aria-hidden="true">
+            <path
+              fill="#fff"
+              d="M256.003 0C114.555 0 0 114.555 0 256.003c0 113.286 73.28 208.961 175.038 242.865 12.796 2.247 17.586-5.433 17.586-12.153 0-6.077-.309-26.225-.309-47.686-64.313 11.844-80.941-15.674-86.058-30.055-2.896-7.37-15.359-30.1-26.269-36.177-8.948-4.808-21.752-16.652-.31-16.961 20.168-.309 34.574 18.564 39.382 26.244 23.038 38.732 59.839 27.828 74.555 21.101 2.227-16.627 8.947-27.828 16.318-34.239-56.968-6.386-116.467-28.471-116.467-126.399 0-27.827 9.907-50.866 26.225-68.787-2.562-6.41-11.51-32.655 2.562-67.853 0 0 21.436-6.72 70.409 26.244 20.483-5.767 42.227-8.638 63.998-8.638 21.751 0 43.52 2.896 63.997 8.638 48.973-33.279 70.39-26.244 70.39-26.244 14.09 35.192 5.117 61.443 2.562 67.853 16.318 17.921 26.244 40.625 26.244 68.787 0 98.237-59.84 119.988-116.801 126.399 9.282 8.014 17.277 23.373 17.277 47.371 0 34.238-.309 61.751-.309 70.389 0 6.721 4.808 14.735 17.586 12.179C438.739 464.964 512 368.955 512 256.003 512 114.555 397.445 0 256.003 0z"
+            />
+          </svg>
+        </a>
+        <a class="social-bar__item" href="https://twitter.com" target="_blank" rel="noreferrer">
+          <span class="sr-only">X (Twitter)</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 462.799" aria-hidden="true">
+            <path
+              fill="#fff"
+              d="M403.229 0h78.506L310.219 196.04 512 462.799H354.002L230.261 301.007 88.669 462.799h-78.56l183.455-209.683L0 0h161.999l111.856 147.88L403.229 0zm-27.556 415.805h43.505L138.363 44.527h-46.68l283.99 371.278z"
+            />
+          </svg>
+        </a>
+        <a class="social-bar__item" href="https://dexscreener.com" target="_blank" rel="noreferrer">
+          <span class="sr-only">Dexscreener</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 300" aria-hidden="true">
+            <path
+              fill="#fff"
+              d="M151.818 106.866c9.177-4.576 20.854-11.312 32.545-20.541 2.465 5.119 2.735 9.586 1.465 13.193-.9 2.542-2.596 4.753-4.826 6.512-2.415 1.901-5.431 3.285-8.765 4.033-6.326 1.425-13.712.593-20.419-3.197m1.591 46.886l12.148 7.017c-24.804 13.902-31.547 39.716-39.557 64.859-8.009-25.143-14.753-50.957-39.556-64.859l12.148-7.017a5.95 5.95 0 003.84-5.845c-1.113-23.547 5.245-33.96 13.821-40.498 3.076-2.342 6.434-3.518 9.747-3.518s6.671 1.176 9.748 3.518c8.576 6.538 14.934 16.951 13.821 40.498a5.95 5.95 0 003.84 5.845zM126 0c14.042.377 28.119 3.103 40.336 8.406 8.46 3.677 16.354 8.534 23.502 14.342 3.228 2.622 5.886 5.155 8.814 8.071 7.897.273 19.438-8.5 24.796-16.709-9.221 30.23-51.299 65.929-80.43 79.589-.012-.005-.02-.012-.029-.018-5.228-3.992-11.108-5.988-16.989-5.988s-11.76 1.996-16.988 5.988c-.009.005-.017.014-.029.018-29.132-13.66-71.209-49.359-80.43-79.589 5.357 8.209 16.898 16.982 24.795 16.709 2.929-2.915 5.587-5.449 8.814-8.071C69.31 16.94 77.204 12.083 85.664 8.406 97.882 3.103 111.959.377 126 0m-25.818 106.866c-9.176-4.576-20.854-11.312-32.544-20.541-2.465 5.119-2.735 9.586-1.466 13.193.901 2.542 2.597 4.753 4.826 6.512 2.416 1.901 5.432 3.285 8.766 4.033 6.326 1.425 13.711.593 20.418-3.197"
+            />
+            <path
+              fill="#fff"
+              d="M197.167 75.016c6.436-6.495 12.107-13.684 16.667-20.099l2.316 4.359c7.456 14.917 11.33 29.774 11.33 46.494l-.016 26.532.14 13.754c.54 33.766 7.846 67.929 24.396 99.193l-34.627-27.922-24.501 39.759-25.74-24.231L126 299.604l-41.132-66.748-25.739 24.231-24.501-39.759L0 245.25c16.55-31.264 23.856-65.427 24.397-99.193l.14-13.754-.016-26.532c0-16.721 3.873-31.578 11.331-46.494l2.315-4.359c4.56 6.415 10.23 13.603 16.667 20.099l-2.01 4.175c-3.905 8.109-5.198 17.176-2.156 25.799 1.961 5.554 5.54 10.317 10.154 13.953 4.48 3.531 9.782 5.911 15.333 7.161 3.616.814 7.3 1.149 10.96 1.035-.854 4.841-1.227 9.862-1.251 14.978L53.2 160.984l25.206 14.129a41.926 41.926 0 015.734 3.869c20.781 18.658 33.275 73.855 41.861 100.816 8.587-26.961 21.08-82.158 41.862-100.816a41.865 41.865 0 015.734-3.869l25.206-14.129-32.665-18.866c-.024-5.116-.397-10.137-1.251-14.978 3.66.114 7.344-.221 10.96-1.035 5.551-1.25 10.854-3.63 15.333-7.161 4.613-3.636 8.193-8.399 10.153-13.953 3.043-8.623 1.749-17.689-2.155-25.799l-2.01-4.175z"
+            />
+          </svg>
+        </a>
+      </div>
+    </div>
+    <section class="partners-section" id="token" aria-label="Technology partners">
+      <div class="partners-section__content">
+        <p class="partners-section__eyebrow">Powered by the Leading Technologies in Web3</p>
+        <div class="partners-section__logos">
+          <div class="partners-section__logo">
+            <img src="./media/solana.svg" alt="Solana" loading="lazy" />
+          </div>
+          <div class="partners-section__logo">
+            <img src="./media/helius.svg" alt="Helius" loading="lazy" />
+          </div>
+          <div class="partners-section__logo">
+            <img src="./media/phantom.svg" alt="Phantom" loading="lazy" />
+          </div>
+          <div class="partners-section__logo">
+            <img src="./media/cloudflare.svg" alt="Cloudflare" loading="lazy" />
+          </div>
+        </div>
+      </div>
 
-    <footer class="landing-footer">
-      <p>Powered by Solana wallets. Hosted at <strong>solink.chat</strong>.</p>
-    </footer>
+      <!-- What is SOLINK -->
+      <div class="about-block">
+        <div class="about-block__header">
+          <p class="about-block__eyebrow">What is SOLINK?</p>
+          <h2 class="about-block__title">The Future of Web3 Communication</h2>
+          <p class="about-block__lead">
+            SOLINK is a decentralized, wallet-native messenger built on Solana. 
+            Send encrypted messages directly between wallets - no emails, no phone numbers, 
+            just your public key. True privacy for the Web3 era.
+          </p>
+        </div>
+
+        <!-- Architecture Flow -->
+        <div class="flow-diagram">
+          <div class="flow-diagram__line"></div>
+          
+          <div class="flow-diagram__steps">
+            <div class="flow-step">
+              <div class="flow-step__marker"></div>
+              <div class="flow-step__content">
+                <span class="flow-step__label">Connect</span>
+                <span class="flow-step__title">Wallet Auth</span>
+              </div>
+            </div>
+
+            <div class="flow-step">
+              <div class="flow-step__marker flow-step__marker--active"></div>
+              <div class="flow-step__content">
+                <span class="flow-step__label">Encrypt</span>
+                <span class="flow-step__title">E2E Security</span>
+              </div>
+            </div>
+
+            <div class="flow-step">
+              <div class="flow-step__marker"></div>
+              <div class="flow-step__content">
+                <span class="flow-step__label">Route</span>
+                <span class="flow-step__title">Edge Network</span>
+              </div>
+            </div>
+
+            <div class="flow-step">
+              <div class="flow-step__marker"></div>
+              <div class="flow-step__content">
+                <span class="flow-step__label">Deliver</span>
+                <span class="flow-step__title">Instant Message</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flow-diagram__badge">
+            <span>Verified on Solana</span>
+          </div>
+        </div>
+
+        <!-- Features Grid -->
+        <div class="about-block__features">
+          <div class="feature-card-v2">
+            <div class="feature-card-v2__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="11" width="18" height="11" rx="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
+            <h3>End-to-End Encrypted</h3>
+            <p>Military-grade encryption ensures only you and your recipient can read messages. Not even we can access them.</p>
+          </div>
+
+          <div class="feature-card-v2">
+            <div class="feature-card-v2__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9"/>
+              </svg>
+            </div>
+            <h3>Wallet-Native Identity</h3>
+            <p>Your Solana wallet is your identity. No registration, no personal data — connect and start messaging instantly.</p>
+          </div>
+
+          <div class="feature-card-v2">
+            <div class="feature-card-v2__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            <h3>Zero Trust Architecture</h3>
+            <p>Messages are encrypted client-side before transmission. Servers never see plaintext data.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Token & Roadmap Section -->
+    <section class="token-section" aria-label="Token and Roadmap">
+      <div class="token-section__content">
+        
+        <!-- Token Section - Simple -->
+        <div class="ts-token">
+          <p class="ts-token__label">Community Token on Solana</p>
+          <h2 class="ts-token__name">$SOLINK</h2>
+          <p class="ts-token__text">
+            Power the future of Web3 communication.<br>
+            Decentralized. Private. Yours.
+          </p>
+          <a class="ts-token__link" href="https://pump.fun" target="_blank">
+            Available on Pump.fun →
+          </a>
+        </div>
+
+        <!-- Roadmap - Horizontal -->
+        <div class="ts-roadmap">
+          <h3 class="ts-roadmap__title">Roadmap</h3>
+          
+          <div class="ts-roadmap__track">
+            <div class="ts-roadmap__step ts-roadmap__step--done">
+              <span class="ts-roadmap__num">01</span>
+              <span class="ts-roadmap__name">Launch</span>
+              <span class="ts-roadmap__desc">Core messenger on Solana · End-to-end encryption · Early feedback · Token launch</span>
+            </div>
+            <div class="ts-roadmap__step">
+              <span class="ts-roadmap__num">02</span>
+              <span class="ts-roadmap__name">Files & Groups</span>
+              <span class="ts-roadmap__desc">File sharing · Multi-token payments · Group chats · Browser extension</span>
+            </div>
+            <div class="ts-roadmap__step">
+              <span class="ts-roadmap__num">03</span>
+              <span class="ts-roadmap__name">Voice & Video</span>
+              <span class="ts-roadmap__desc">Wallet-to-wallet calls · Video conferencing · Screen sharing · Notifications</span>
+            </div>
+            <div class="ts-roadmap__step">
+              <span class="ts-roadmap__num">04</span>
+              <span class="ts-roadmap__name">Mobile Apps</span>
+              <span class="ts-roadmap__desc">iOS native app · Android native app · Cross-platform sync · Multi-language</span>
+            </div>
+            <div class="ts-roadmap__step">
+              <span class="ts-roadmap__num">05</span>
+              <span class="ts-roadmap__name">Global Scale</span>
+              <span class="ts-roadmap__desc">Phantom partnership · Solana Foundation · Global marketing · Enterprise solutions</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="ts-footer">
+          <div class="ts-footer__brand">
+            <span class="ts-footer__logo">SOLINK</span>
+            <span class="ts-footer__tagline">Web3 Messenger</span>
+          </div>
+          
+          <div class="ts-footer__links">
+            <a href="https://twitter.com" target="_blank" rel="noreferrer">Twitter</a>
+            <a href="https://pump.fun" target="_blank" rel="noreferrer">Pump.fun</a>
+            <a href="https://dexscreener.com" target="_blank" rel="noreferrer">Dexscreener</a>
+            <a href="https://github.com" target="_blank" rel="noreferrer">GitHub</a>
+          </div>
+          
+          <p class="ts-footer__copy">© 2025 SOLINK. Built on Solana.</p>
+        </footer>
+
+      </div>
+    </section>
+    <script>
+      // Scroll to top on page load/reload
+      if ('scrollRestoration' in history) {
+        history.scrollRestoration = 'manual';
+      }
+      window.scrollTo(0, 0);
+      
+      // Remove hash from URL without reload
+      if (window.location.hash) {
+        history.replaceState(null, '', window.location.pathname);
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        window.scrollTo(0, 0);
+        
+        // Hero nav blur on scroll
+        const heroNav = document.querySelector('.hero-nav');
+        if (heroNav) {
+          let lastScrollY = 0;
+          const scrollThreshold = 100; // Start blur after 100px scroll
+          
+          const updateNavBlur = () => {
+            const scrollY = window.scrollY;
+            
+            if (scrollY > scrollThreshold) {
+              heroNav.classList.add('is-scrolled');
+            } else {
+              heroNav.classList.remove('is-scrolled');
+            }
+            
+            lastScrollY = scrollY;
+          };
+          
+          window.addEventListener('scroll', updateNavBlur, { passive: true });
+          updateNavBlur(); // Check initial state
+        }
+        
+        // Observer for sections
+        const sectionObserver = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('is-visible');
+            }
+          });
+        }, {
+          threshold: 0.1,
+          rootMargin: '0px 0px -50px 0px'
+        });
+
+        document.querySelectorAll('.partners-section__content').forEach(el => {
+          sectionObserver.observe(el);
+        });
+
+        // Separate observer for individual elements - each triggers independently
+        const elementObserver = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('is-visible');
+            }
+          });
+        }, {
+          threshold: 0.15,
+          rootMargin: '0px 0px -100px 0px'
+        });
+
+        // About block elements
+        document.querySelectorAll('.about-block__header, .flow-diagram, .about-block__features').forEach(el => {
+          elementObserver.observe(el);
+        });
+
+        // Token section elements
+        document.querySelectorAll('.ts-token, .ts-roadmap, .ts-footer').forEach(el => {
+          elementObserver.observe(el);
+        });
+      });
+    </script>
   </body>
 </html>

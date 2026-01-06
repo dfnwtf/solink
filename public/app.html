@@ -36,7 +36,7 @@
   <body class="app-shell" data-theme="dark">
     <div class="app-layout">
       <aside class="nav-rail">
-        <div class="nav-rail__logo">SOLink</div>
+        <a href="/" class="nav-rail__logo">SOLink</a>
         <nav class="nav-rail__list">
           <button type="button" class="nav-rail__item is-active" data-nav="all">
             <span class="nav-rail__icon icon-chats"></span>
@@ -148,6 +148,40 @@
             </p>
           </div>
         </section>
+
+        <section class="settings-panel sidebar__section" data-role="settings-panel" hidden>
+          <div class="sidebar__section-title">Settings</div>
+          <div class="settings-card">
+            <div class="settings-option">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Sound notifications</div>
+                <p class="settings-option__description">Play a sound for new incoming messages.</p>
+              </div>
+              <label class="settings-toggle" aria-label="Toggle sound notifications">
+                <input type="checkbox" data-role="settings-sound-toggle" checked />
+                <span class="settings-toggle__track"></span>
+              </label>
+            </div>
+            <div class="settings-option">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Backup &amp; restore</div>
+                <p class="settings-option__description">Export or import your contacts and chats locally.</p>
+              </div>
+              <div class="settings-option__actions">
+                <button type="button" class="ghost-button" data-action="export-data">Export</button>
+                <button type="button" class="ghost-button" data-action="import-data">Import</button>
+              </div>
+            </div>
+            <div class="settings-option settings-option--logout">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Log out</div>
+                <p class="settings-option__description">Disconnect wallet and return to the start screen.</p>
+              </div>
+              <button type="button" class="ghost-button ghost-button--danger" data-action="logout">Log out</button>
+            </div>
+          </div>
+          <input type="file" data-role="import-file" accept="application/json" hidden />
+        </section>
       </section>
 
       <section class="chat-column" data-role="chat-view">
@@ -178,6 +212,21 @@
         </div>
 
         <footer class="composer" data-role="composer">
+          <div class="composer__reply" data-role="reply-preview" hidden>
+            <div class="composer__reply-bar"></div>
+            <div class="composer__reply-body">
+              <div class="composer__reply-author" data-role="reply-author">Reply</div>
+              <div class="composer__reply-text" data-role="reply-text"></div>
+            </div>
+            <button
+              type="button"
+              class="composer__reply-close"
+              data-action="cancel-reply"
+              aria-label="Cancel reply"
+            >
+              <span class="icon icon-close"></span>
+            </button>
+          </div>
           <textarea
             class="composer__input"
             rows="1"
@@ -308,13 +357,52 @@
       </div>
     </div>
 
+    <div class="forward-modal" data-role="forward-modal" hidden>
+      <div class="forward-modal__panel">
+        <header class="forward-modal__header">
+          <div>
+            <div class="forward-modal__title">Forward message</div>
+            <div class="forward-modal__subtitle" data-role="forward-subtitle">Select a chat</div>
+          </div>
+          <button type="button" class="forward-close-button" data-action="close-forward" aria-label="Close">
+            <span class="icon icon-close"></span>
+          </button>
+        </header>
+        <div class="forward-modal__search">
+          <span class="icon icon-search"></span>
+          <input type="text" placeholder="Search chats" data-role="forward-search" autocomplete="off" />
+        </div>
+        <div class="forward-modal__list" data-role="forward-list"></div>
+        <footer class="forward-modal__footer">
+          <div class="forward-modal__selection" data-role="forward-selection" hidden>
+            <div class="forward-modal__selection-label">Forward to</div>
+            <div class="forward-modal__selection-name" data-role="forward-selection-name">—</div>
+          </div>
+          <div class="forward-modal__actions">
+            <button
+              type="button"
+              class="forward-close-button forward-close-button--text"
+              data-action="close-forward"
+            >
+              Cancel
+            </button>
+            <button type="button" class="primary-button forward-send" data-action="confirm-forward" disabled>
+              Send
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
+
     <div class="toast" data-role="toast" hidden></div>
 
-    <audio
-      data-role="notification-sound"
-      preload="auto"
-      src="data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAAwAAGG5nY2YAAAAAAGFtcGwAAAAPAAAABAAAAnEAgAMAAABkYXQhAAAAAA=="
-    ></audio>
+    <div class="context-menu" data-role="message-menu" hidden>
+      <button type="button" data-action="message-reply">Reply</button>
+      <button type="button" data-action="message-forward">Forward</button>
+      <button type="button" data-action="message-delete" class="is-danger">Delete</button>
+    </div>
+
+    <audio data-role="notification-sound" preload="auto" src="./media/inbox.mp3" type="audio/mpeg"></audio>
 
     <script>
       window.SOLINK_API_BASE = '/api';
