@@ -1,10 +1,41 @@
 const API_BASE = window.SOLINK_API_BASE || '/api';
 const SESSION_STORAGE_KEY = 'solink.session.v1';
-export const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const SESSION_DURATION_KEY = 'solink.sessionDuration';
+const DEFAULT_SESSION_DURATION_MS = 60 * 60 * 1000; // 1 hour default
 
 let sessionToken = null;
 let sessionMeta = null;
 let sessionRestored = false;
+
+// Session duration setting (can be changed by user)
+export function getSessionDurationMs() {
+  try {
+    const stored = localStorage.getItem(SESSION_DURATION_KEY);
+    if (stored) {
+      const value = parseInt(stored, 10);
+      // Validate range: 15 min to 12 hours
+      if (value >= 15 * 60 * 1000 && value <= 12 * 60 * 60 * 1000) {
+        return value;
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return DEFAULT_SESSION_DURATION_MS;
+}
+
+export function setSessionDurationMs(durationMs) {
+  try {
+    // Validate range: 15 min to 12 hours
+    const clamped = Math.max(15 * 60 * 1000, Math.min(12 * 60 * 60 * 1000, durationMs));
+    localStorage.setItem(SESSION_DURATION_KEY, String(clamped));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+// Legacy export for compatibility
+export const SESSION_MAX_AGE_MS = DEFAULT_SESSION_DURATION_MS;
 
 function removePersistedSession() {
   try {
@@ -24,7 +55,8 @@ function persistSessionMeta(meta) {
 
 function isSessionExpired(meta) {
   if (!meta?.timestamp) return true;
-  return Date.now() - meta.timestamp > SESSION_MAX_AGE_MS;
+  const maxAge = meta.durationMs || getSessionDurationMs();
+  return Date.now() - meta.timestamp > maxAge;
 }
 
 function restoreSessionFromStorage() {
@@ -54,10 +86,15 @@ function ensureFreshSession() {
   }
 }
 
-export function setSessionToken(token, pubkey) {
+export function setSessionToken(token, pubkey, durationMs = null) {
   sessionToken = token || null;
   if (token && pubkey) {
-    sessionMeta = { token, pubkey, timestamp: Date.now() };
+    sessionMeta = { 
+      token, 
+      pubkey, 
+      timestamp: Date.now(),
+      durationMs: durationMs || getSessionDurationMs()
+    };
     persistSessionMeta(sessionMeta);
   } else {
     sessionMeta = null;
@@ -162,19 +199,22 @@ export async function verifySignature({ pubkey, nonce, signature }) {
     throw new Error('Missing verification data');
   }
 
+  const sessionDurationMs = getSessionDurationMs();
+  const sessionDurationSeconds = Math.floor(sessionDurationMs / 1000);
+
   const result = await request('/auth/verify', {
     method: 'POST',
-    body: JSON.stringify({ pubkey, nonce, signature }),
+    body: JSON.stringify({ pubkey, nonce, signature, sessionTtl: sessionDurationSeconds }),
   });
 
   if (result?.token) {
-    setSessionToken(result.token, pubkey);
+    setSessionToken(result.token, pubkey, sessionDurationMs);
   }
 
   return result;
 }
 
-export async function sendMessage({ to, text, ciphertext, nonce, version, timestamp }) {
+export async function sendMessage({ to, text, ciphertext, nonce, version, timestamp, tokenPreview }) {
   if (!to) {
     throw new Error('Missing recipient');
   }
@@ -194,6 +234,11 @@ export async function sendMessage({ to, text, ciphertext, nonce, version, timest
       throw new Error('Missing message content');
     }
     payload.text = text;
+  }
+
+  // Add token preview if present
+  if (tokenPreview) {
+    payload.tokenPreview = tokenPreview;
   }
 
   return request('/messages/send', {
@@ -263,5 +308,27 @@ export async function updateEncryptionKey(publicKey) {
   return request('/profile/encryption-key', {
     method: 'POST',
     body: JSON.stringify({ publicKey }),
+  });
+}
+
+// Token preview for pump.fun links
+export async function fetchTokenPreview(tokenAddress) {
+  if (!tokenAddress) {
+    throw new Error('Missing token address');
+  }
+  return request(`/token/preview?address=${encodeURIComponent(tokenAddress)}`, {
+    method: 'GET',
+    timeoutMs: 10000, // 10 second timeout for external API calls
+  });
+}
+
+// Token preview for DexScreener pair links
+export async function fetchDexPairPreview(pairAddress) {
+  if (!pairAddress) {
+    throw new Error('Missing pair address');
+  }
+  return request(`/dex/preview?pair=${encodeURIComponent(pairAddress)}`, {
+    method: 'GET',
+    timeoutMs: 10000, // 10 second timeout for external API calls
   });
 }
