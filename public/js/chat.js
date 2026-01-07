@@ -17,6 +17,9 @@ import {
   getCurrentRoute,
   getProviderInstance,
   logout as requestLogout,
+  isMobileDevice,
+  initiateMobileTransaction,
+  hasMobileSession,
 } from "./main.js";
 import {
   sendMessage,
@@ -424,7 +427,7 @@ function bindEvents() {
 
   ui.copyContactLinkButton?.addEventListener("click", () => {
     if (!state.activeContactKey) return;
-    copyToClipboard(createShareLink(state.activeContactKey), "Contact link copied");
+    copyToClipboard(state.activeContactKey, "Wallet address copied");
   });
 
   ui.removeContactButton?.addEventListener("click", async () => {
@@ -467,6 +470,10 @@ function bindEvents() {
   });
 
   ui.closeChatButton?.addEventListener("click", handleCloseChat);
+  
+  // Mobile back button
+  const mobileBackBtn = document.querySelector("[data-action=\"mobile-back\"]");
+  mobileBackBtn?.addEventListener("click", handleMobileBack);
 
   ui.paymentAmount?.addEventListener("input", updatePaymentControls);
   ui.paymentToken?.addEventListener("change", updatePaymentControls);
@@ -681,6 +688,19 @@ function ensureStatusElements() {
   }
   if (!ui.statusIndicator) {
     ui.statusIndicator = document.querySelector("[data-role=\"connection-indicator\"]");
+  }
+}
+
+function handleSessionExpired() {
+  ensureStatusElements();
+  setTextContent(ui.statusLabel, "Session expired");
+  ui.statusIndicator?.classList.remove("is-online");
+  ui.statusIndicator?.classList.add("is-offline");
+  showToast("Session expired. Please reconnect wallet.");
+  // Stop polling
+  pollLoopShouldRun = false;
+  if (pollAbortController) {
+    pollAbortController.abort();
   }
 }
 
@@ -1408,7 +1428,11 @@ function createContactElement(contact) {
   item.appendChild(aside);
 
   item.addEventListener("click", async () => {
-    if (contact.pubkey === state.activeContactKey) return;
+    if (contact.pubkey === state.activeContactKey) {
+      // Same contact - just show chat on mobile
+      showMobileChat();
+      return;
+    }
     await setActiveContact(contact.pubkey);
     history.replaceState(null, "", `#/dm/${contact.pubkey}`);
   });
@@ -2170,8 +2194,14 @@ function toggleComposer(enabled) {
 }
 
 function toggleConnectOverlay(visible) {
-  if (!ui.connectOverlay) return;
+  console.log('[Chat] toggleConnectOverlay called, visible:', visible);
+  console.log('[Chat] ui.connectOverlay:', ui.connectOverlay);
+  if (!ui.connectOverlay) {
+    console.log('[Chat] connectOverlay element not found!');
+    return;
+  }
   ui.connectOverlay.hidden = !visible;
+  console.log('[Chat] connectOverlay.hidden set to:', ui.connectOverlay.hidden);
 }
 
 function getPaymentAmountValue() {
@@ -2250,6 +2280,7 @@ async function sendSystemPaymentMessage({ lamports, fromPubkey, toPubkey, signat
 
 function handleCloseChat() {
   clearChatView();
+  hideMobileChat();
   history.replaceState(null, "", "#/");
 }
 
@@ -2347,11 +2378,35 @@ async function handleSendPayment() {
   }
 
   const provider = getProviderInstance();
-  if (!provider?.publicKey) {
+  const isMobile = isMobileDevice();
+  
+  // Check if we have a provider or mobile session
+  if (!provider?.publicKey && !hasMobileSession()) {
+    showToast("Connect wallet first");
+    return;
+  }
+  
+  // Get from pubkey - either from provider or from wallet state
+  let fromPubkey;
+  if (provider?.publicKey) {
+    fromPubkey = provider.publicKey;
+  } else if (isMobile && hasMobileSession()) {
+    // On mobile, use the wallet pubkey from state
+    const walletPubkeyStr = getWalletPubkey();
+    if (!walletPubkeyStr) {
+      showToast("Wallet not connected");
+      return;
+    }
+    try {
+      fromPubkey = new PublicKey(walletPubkeyStr);
+    } catch {
+      showToast("Invalid wallet address");
+      return;
+    }
+  } else {
     showToast("Wallet unavailable");
     return;
   }
-  const fromPubkey = provider.publicKey;
   const fromPubkeyString = fromPubkey.toBase58();
   const toPubkeyString = toPubkey.toBase58();
 
@@ -2371,10 +2426,16 @@ async function handleSendPayment() {
     );
 
     let signature;
-    if (typeof provider.signAndSendTransaction === "function") {
+    
+    // Check if we need to use mobile deeplinks
+    if (isMobile && !provider?.signAndSendTransaction) {
+      // Send SOL not supported on mobile without wallet extension
+      showToast("Send SOL is available on desktop only");
+      return;
+    } else if (typeof provider?.signAndSendTransaction === "function") {
       const result = await provider.signAndSendTransaction(transaction);
       signature = typeof result === "string" ? result : result?.signature;
-    } else if (typeof provider.signTransaction === "function") {
+    } else if (typeof provider?.signTransaction === "function") {
       const signed = await provider.signTransaction(transaction);
       signature = await solanaConnection.sendRawTransaction(signed.serialize());
     } else {
@@ -2591,7 +2652,11 @@ async function sendPreparedMessage({
     if (state.activeContactKey === normalized) {
       renderMessages(normalized);
     }
-    showToast(error.message || "Failed to send message");
+    if (error.isUnauthorized) {
+      handleSessionExpired();
+    } else {
+      showToast(error.message || "Failed to send message");
+    }
     return false;
   }
 }
@@ -2828,6 +2893,279 @@ async function setActiveContact(pubkey) {
   toggleComposer(Boolean(latestAppState?.isAuthenticated));
   updatePaymentRecipient(normalized);
   handleMessageInput();
+  
+  // Show chat on mobile
+  showMobileChat();
+}
+
+// Mobile navigation helpers
+function showMobileChat() {
+  const appLayout = document.querySelector(".app-layout");
+  const mobileNav = document.querySelector(".mobile-nav");
+  if (appLayout) {
+    appLayout.classList.add("chat-active");
+  }
+  if (mobileNav) {
+    mobileNav.classList.add("is-hidden");
+  }
+}
+
+function hideMobileChat() {
+  const appLayout = document.querySelector(".app-layout");
+  const mobileNav = document.querySelector(".mobile-nav");
+  if (appLayout) {
+    appLayout.classList.remove("chat-active");
+  }
+  if (mobileNav) {
+    mobileNav.classList.remove("is-hidden");
+  }
+}
+
+function handleMobileBack() {
+  // Clear active contact so notifications work properly
+  state.activeContactKey = null;
+  updateContactListSelection();
+  hideMobileChat();
+}
+
+function initMobileNavigation() {
+  const mobileNav = document.querySelector("[data-role=\"mobile-nav\"]");
+  if (!mobileNav) return;
+  
+  const mobileNavItems = mobileNav.querySelectorAll("[data-nav]");
+  const desktopNavItems = document.querySelectorAll(".nav-rail__item[data-nav]");
+  
+  mobileNavItems.forEach((item) => {
+    item.addEventListener("click", () => {
+      const navTarget = item.dataset.nav;
+      
+      // Find and click corresponding desktop nav item
+      const desktopItem = document.querySelector(`.nav-rail__item[data-nav="${navTarget}"]`);
+      if (desktopItem) {
+        desktopItem.click();
+      }
+      
+      // Update mobile nav active state
+      mobileNavItems.forEach((i) => i.classList.remove("is-active"));
+      item.classList.add("is-active");
+    });
+  });
+  
+  // Sync mobile nav when desktop nav changes
+  desktopNavItems.forEach((item) => {
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === "class") {
+          const navTarget = item.dataset.nav;
+          const mobileItem = mobileNav.querySelector(`[data-nav="${navTarget}"]`);
+          if (mobileItem) {
+            if (item.classList.contains("is-active")) {
+              mobileNavItems.forEach((i) => i.classList.remove("is-active"));
+              mobileItem.classList.add("is-active");
+            }
+          }
+        }
+      });
+    });
+    observer.observe(item, { attributes: true });
+  });
+}
+
+// Mobile Info Sheet
+const mobileInfoUI = {
+  sheet: null,
+  backdrop: null,
+  avatar: null,
+  name: null,
+  pubkey: null,
+  localName: null,
+  favoriteLabel: null,
+  saveLabel: null,
+  paymentAmount: null,
+  paymentRecipient: null,
+};
+
+function cacheMobileInfoUI() {
+  mobileInfoUI.sheet = document.querySelector("[data-role=\"mobile-info-sheet\"]");
+  mobileInfoUI.backdrop = mobileInfoUI.sheet?.querySelector("[data-action=\"close-mobile-info\"]");
+  mobileInfoUI.avatar = document.querySelector("[data-role=\"mobile-info-avatar\"]");
+  mobileInfoUI.name = document.querySelector("[data-role=\"mobile-info-name\"]");
+  mobileInfoUI.pubkey = document.querySelector("[data-role=\"mobile-info-pubkey\"]");
+  mobileInfoUI.localName = document.querySelector("[data-role=\"mobile-info-local-name\"]");
+  mobileInfoUI.favoriteLabel = document.querySelector("[data-role=\"mobile-favorite-label\"]");
+  mobileInfoUI.saveLabel = document.querySelector("[data-role=\"mobile-save-label\"]");
+  mobileInfoUI.paymentAmount = document.querySelector("[data-role=\"mobile-payment-amount\"]");
+  mobileInfoUI.paymentRecipient = document.querySelector("[data-role=\"mobile-payment-recipient\"]");
+}
+
+function openMobileInfoSheet() {
+  if (!mobileInfoUI.sheet || !state.activeContactKey) return;
+  
+  const contact = state.contacts.find((c) => c.pubkey === state.activeContactKey);
+  if (!contact) return;
+  
+  // Update sheet content
+  const displayName = contact.localName || contact.nickname || shortenPubkey(contact.pubkey);
+  setTextContent(mobileInfoUI.name, displayName);
+  setTextContent(mobileInfoUI.pubkey, shortenPubkey(contact.pubkey));
+  setTextContent(mobileInfoUI.paymentRecipient, shortenPubkey(contact.pubkey));
+  
+  if (mobileInfoUI.avatar) {
+    setAvatar(mobileInfoUI.avatar, contact.pubkey, 56, displayName);
+  }
+  
+  if (mobileInfoUI.localName) {
+    mobileInfoUI.localName.value = contact.localName || "";
+  }
+  
+  // Update labels
+  setTextContent(mobileInfoUI.favoriteLabel, contact.isFavorite ? "Unmark favorite" : "Mark favorite");
+  setTextContent(mobileInfoUI.saveLabel, contact.isSaved ? "Unsave contact" : "Save contact");
+  
+  // Show sheet
+  mobileInfoUI.sheet.hidden = false;
+  requestAnimationFrame(() => {
+    mobileInfoUI.sheet.dataset.visible = "true";
+  });
+}
+
+function closeMobileInfoSheet() {
+  if (!mobileInfoUI.sheet) return;
+  
+  mobileInfoUI.sheet.dataset.visible = "false";
+  setTimeout(() => {
+    mobileInfoUI.sheet.hidden = true;
+  }, 300);
+}
+
+async function handleMobileLocalNameChange() {
+  if (!state.activeContactKey || !mobileInfoUI.localName) return;
+  
+  const newName = mobileInfoUI.localName.value.trim();
+  await updateContact(state.activeContactKey, { localName: newName, updatedAt: Date.now() });
+  updateContactInState(state.activeContactKey, { localName: newName });
+  updateContactHeader();
+  refreshContacts(false);
+  
+  // Also update desktop info panel
+  if (ui.infoLocalName) {
+    ui.infoLocalName.value = newName;
+  }
+}
+
+async function handleMobileToggleFavorite() {
+  if (!state.activeContactKey) return;
+  
+  const contact = state.contacts.find((c) => c.pubkey === state.activeContactKey);
+  if (!contact) return;
+  
+  const newValue = !contact.isFavorite;
+  await updateContact(state.activeContactKey, { isFavorite: newValue, updatedAt: Date.now() });
+  updateContactInState(state.activeContactKey, { isFavorite: newValue });
+  refreshContacts(false);
+  
+  setTextContent(mobileInfoUI.favoriteLabel, newValue ? "Unmark favorite" : "Mark favorite");
+  showToast(newValue ? "Added to favorites" : "Removed from favorites");
+}
+
+async function handleMobileToggleSave() {
+  if (!state.activeContactKey) return;
+  
+  const contact = state.contacts.find((c) => c.pubkey === state.activeContactKey);
+  if (!contact) return;
+  
+  const newValue = !contact.isSaved;
+  await updateContact(state.activeContactKey, { isSaved: newValue, updatedAt: Date.now() });
+  updateContactInState(state.activeContactKey, { isSaved: newValue });
+  refreshContacts(false);
+  
+  setTextContent(mobileInfoUI.saveLabel, newValue ? "Unsave contact" : "Save contact");
+  showToast(newValue ? "Contact saved" : "Contact unsaved");
+}
+
+function handleMobileCopyWallet() {
+  if (!state.activeContactKey) return;
+  
+  navigator.clipboard.writeText(state.activeContactKey).then(() => {
+    showToast("Wallet address copied");
+  }).catch(() => {
+    showToast("Failed to copy");
+  });
+}
+
+async function handleMobileRemoveContact() {
+  if (!state.activeContactKey) return;
+  
+  if (hasWindow && !window.confirm("Remove this contact and all messages?")) {
+    return;
+  }
+  
+  const pubkey = state.activeContactKey;
+  closeMobileInfoSheet();
+  handleCloseChat();
+  
+  await removeContact(pubkey);
+  state.contacts = state.contacts.filter((c) => c.pubkey !== pubkey);
+  state.messages.delete(pubkey);
+  refreshContacts();
+  showToast("Contact removed");
+}
+
+function initMobileInfoSheet() {
+  cacheMobileInfoUI();
+  if (!mobileInfoUI.sheet) return;
+  
+  // Open button (menu icon)
+  const openBtn = document.querySelector("[data-action=\"open-mobile-info\"]");
+  openBtn?.addEventListener("click", openMobileInfoSheet);
+  
+  // Also open when clicking on contact header (avatar/name) on mobile
+  const contactHeader = document.querySelector(".chat-column__contact");
+  contactHeader?.addEventListener("click", (e) => {
+    // Only on mobile (check if mobile-info-btn is visible)
+    const infoBtn = document.querySelector(".mobile-info-btn");
+    if (infoBtn && window.getComputedStyle(infoBtn).display !== "none") {
+      openMobileInfoSheet();
+    }
+  });
+  
+  // Close on backdrop click
+  mobileInfoUI.backdrop?.addEventListener("click", closeMobileInfoSheet);
+  
+  // Local name change
+  mobileInfoUI.localName?.addEventListener("change", handleMobileLocalNameChange);
+  mobileInfoUI.localName?.addEventListener("blur", handleMobileLocalNameChange);
+  
+  // Action buttons
+  document.querySelector("[data-action=\"mobile-toggle-favorite\"]")?.addEventListener("click", handleMobileToggleFavorite);
+  document.querySelector("[data-action=\"mobile-toggle-save\"]")?.addEventListener("click", handleMobileToggleSave);
+  document.querySelector("[data-action=\"mobile-copy-wallet\"]")?.addEventListener("click", handleMobileCopyWallet);
+  document.querySelector("[data-action=\"mobile-remove-contact\"]")?.addEventListener("click", handleMobileRemoveContact);
+  
+  // Payment - sync with main payment handler
+  const mobilePaymentBtn = document.querySelector("[data-action=\"mobile-send-payment\"]");
+  mobilePaymentBtn?.addEventListener("click", async () => {
+    const amount = mobileInfoUI.paymentAmount?.value;
+    if (!amount || !state.activeContactKey) return;
+    
+    // Use existing payment handler by setting values and triggering
+    if (ui.paymentAmount) {
+      ui.paymentAmount.value = amount;
+      updatePaymentControls();
+      await handleSendPayment();
+      mobileInfoUI.paymentAmount.value = "";
+      closeMobileInfoSheet();
+    }
+  });
+  
+  // Enable/disable payment button based on amount
+  mobileInfoUI.paymentAmount?.addEventListener("input", () => {
+    const btn = document.querySelector("[data-action=\"mobile-send-payment\"]");
+    const amount = parseFloat(mobileInfoUI.paymentAmount?.value || "0");
+    if (btn) {
+      btn.disabled = !(amount > 0 && state.activeContactKey);
+    }
+  });
 }
 
 function ensureInfoPanelElements() {
@@ -3151,6 +3489,10 @@ async function pollLoop() {
     } catch (error) {
       if (error.name !== "AbortError") {
         console.warn("Polling error", error);
+        if (error.isUnauthorized) {
+          handleSessionExpired();
+          break;
+        }
         await delay(POLL_RETRY_DELAY_MS);
       }
     } finally {
@@ -3201,11 +3543,14 @@ async function loadRouteContact() {
 }
 
 async function handleAppStateChange(appState) {
+  console.log('[Chat] handleAppStateChange called');
+  console.log('[Chat] appState:', appState);
   latestAppState = appState;
   updateStatusLabel(appState);
   updateShareLink(appState);
   updateProfileHeader();
   const hasSession = Boolean(appState?.walletPubkey && appState?.isAuthenticated);
+  console.log('[Chat] hasSession:', hasSession, 'walletPubkey:', appState?.walletPubkey, 'isAuthenticated:', appState?.isAuthenticated);
   toggleConnectOverlay(!hasSession);
 
   toggleComposer(Boolean(appState?.isAuthenticated && state.activeContactKey));
@@ -3253,12 +3598,69 @@ function registerDebugHelpers() {
   };
 }
 
+// Check for pending mobile payment after returning from Phantom
+async function checkPendingMobilePayment() {
+  const signatureStr = localStorage.getItem('solink.pending.tx.signature');
+  const pendingPaymentStr = localStorage.getItem('solink.pending.payment');
+  
+  if (!signatureStr || !pendingPaymentStr) {
+    // Clean up any stale data
+    localStorage.removeItem('solink.pending.tx.signature');
+    localStorage.removeItem('solink.pending.payment');
+    return;
+  }
+  
+  try {
+    const pendingPayment = JSON.parse(pendingPaymentStr);
+    
+    // Check if payment is not too old (10 minutes)
+    if (pendingPayment.timestamp && Date.now() - pendingPayment.timestamp > 10 * 60 * 1000) {
+      console.log('[Payment] Pending payment expired');
+      localStorage.removeItem('solink.pending.tx.signature');
+      localStorage.removeItem('solink.pending.payment');
+      return;
+    }
+    
+    console.log('[Payment] Found pending payment, signature:', signatureStr);
+    showToast("Payment submitted");
+    
+    // Confirm the transaction
+    await solanaConnection.confirmTransaction(
+      {
+        signature: signatureStr,
+        blockhash: pendingPayment.blockhash,
+        lastValidBlockHeight: pendingPayment.lastValidBlockHeight,
+      },
+      "confirmed",
+    );
+    
+    showToast("Payment confirmed!");
+    
+    // Send system message about the payment
+    await sendSystemPaymentMessage({
+      lamports: pendingPayment.lamports,
+      fromPubkey: pendingPayment.fromPubkey,
+      toPubkey: pendingPayment.toPubkey,
+      signature: signatureStr,
+    });
+    
+  } catch (error) {
+    console.error('[Payment] Failed to process pending payment:', error);
+    showToast("Payment confirmation failed");
+  } finally {
+    localStorage.removeItem('solink.pending.tx.signature');
+    localStorage.removeItem('solink.pending.payment');
+  }
+}
+
 async function initialize() {
   cacheDom();
   setActiveNav(state.activeNav);
   setSidebarView(state.sidebarView);
   bindEvents();
   initializeEmojiPicker();
+  initMobileNavigation();
+  initMobileInfoSheet();
   handleMessageInput();
   toggleComposer(false);
   registerDebugHelpers();
@@ -3266,9 +3668,16 @@ async function initialize() {
   await ensureEncryptionKeys();
   await loadWorkspace(null);
 
+  console.log('[Chat Init] Registering state change listener...');
   onStateChange(handleAppStateChange);
-  initApp();
+  console.log('[Chat Init] Calling initApp...');
+  await initApp();
+  console.log('[Chat Init] initApp completed, calling loadRouteContact...');
   await loadRouteContact();
+  
+  // Check for pending mobile payment
+  await checkPendingMobilePayment();
+  console.log('[Chat Init] Initialize complete');
 }
 
 document.addEventListener("DOMContentLoaded", () => {
