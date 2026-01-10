@@ -8,11 +8,18 @@ const DEFAULT_SESSION_TTL_SECONDS = 60 * 60; // 1 hour default
 const MIN_SESSION_TTL_SECONDS = 15 * 60; // 15 minutes minimum
 const MAX_SESSION_TTL_SECONDS = 12 * 60 * 60; // 12 hours maximum
 const MAX_MESSAGE_LENGTH = 1024;
-const DEFAULT_CORS = {
-  origin: '*',
-  methods: 'GET,POST,OPTIONS',
-  headers: 'Content-Type,Authorization',
-};
+
+// CORS: Allowed origins for security
+const ALLOWED_ORIGINS = [
+  'https://solink.chat',
+  'http://localhost:3000',
+  'http://localhost:5500',
+  'http://localhost:8080',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5500',
+  'http://127.0.0.1:8080',
+];
+
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const PROFILE_PREFIX = 'profile:';
 const NICKNAME_PREFIX = 'nickname:';
@@ -23,28 +30,41 @@ function sessionKey(token) {
   return `${SESSION_PREFIX}${token}`;
 }
 
-function buildCorsHeaders(env) {
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  // Allow any localhost/127.0.0.1 port for development
+  if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+    return true;
+  }
+  return false;
+}
+
+function buildCorsHeaders(request) {
+  const origin = request?.headers?.get('Origin') || '';
+  const allowedOrigin = isAllowedOrigin(origin) ? origin : ALLOWED_ORIGINS[0];
+  
   return {
-    'Access-Control-Allow-Origin': env.CORS_ALLOW_ORIGIN || DEFAULT_CORS.origin,
-    'Access-Control-Allow-Methods': env.CORS_ALLOW_METHODS || DEFAULT_CORS.methods,
-    'Access-Control-Allow-Headers': env.CORS_ALLOW_HEADERS || DEFAULT_CORS.headers,
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Max-Age': '86400',
   };
 }
 
-function jsonResponse(env, data, init = {}) {
+function jsonResponse(request, data, init = {}) {
   const headers = {
     'Content-Type': 'application/json;charset=UTF-8',
     'Cache-Control': 'no-store',
-    ...buildCorsHeaders(env),
+    ...buildCorsHeaders(request),
     ...(init.headers || {}),
   };
 
   return new Response(JSON.stringify(data), { ...init, headers });
 }
 
-function errorResponse(env, message, status = 400) {
-  return jsonResponse(env, { error: message }, { status });
+function errorResponse(request, message, status = 400) {
+  return jsonResponse(request, { error: message }, { status });
 }
 
 async function readJson(request) {
@@ -148,7 +168,7 @@ function wsEndpoint(env) {
 
 async function handleSolanaProxy(request, env) {
   if (request.method !== 'POST') {
-    return errorResponse(env, 'Method Not Allowed', 405);
+    return errorResponse(request, 'Method Not Allowed', 405);
   }
 
   const endpoints = httpEndpoints(env);
@@ -158,7 +178,7 @@ async function handleSolanaProxy(request, env) {
   try {
     body = await request.text();
   } catch {
-    return errorResponse(env, 'Invalid request body', 400);
+    return errorResponse(request, 'Invalid request body', 400);
   }
 
   let lastError = null;
@@ -177,7 +197,7 @@ async function handleSolanaProxy(request, env) {
 
       if (upstream.ok) {
         const headers = {
-          ...buildCorsHeaders(env),
+          ...buildCorsHeaders(request),
           'Cache-Control': 'no-store',
           'Content-Type':
             upstream.headers.get('Content-Type') ||
@@ -200,7 +220,7 @@ async function handleSolanaProxy(request, env) {
   }
 
   console.error('Solana RPC proxy failed:', lastError);
-  return errorResponse(env, `Solana RPC proxy failed: ${lastError}`, 502);
+  return errorResponse(request, `Solana RPC proxy failed: ${lastError}`, 502);
 }
 
 function wsToHttp(urlString) {
@@ -307,7 +327,7 @@ export default {
       return new Response(null, {
         status: 204,
         headers: {
-          ...buildCorsHeaders(env),
+          ...buildCorsHeaders(request),
           'Content-Length': '0',
         },
       });
@@ -354,6 +374,8 @@ export default {
         return handleDexPairPreview(request, url, env);
       case '/api/image-proxy':
         return handleImageProxy(request, url, env);
+      case '/api/link-preview':
+        return handleLinkPreview(request, url, env);
       default:
         return new Response('Not Found', { status: 404 });
     }
@@ -367,11 +389,11 @@ async function handleNonceRequest(request, url, env) {
 
   const pubkey = url.searchParams.get('pubkey');
   if (!pubkey) {
-    return errorResponse(env, 'Missing pubkey');
+    return errorResponse(request, 'Missing pubkey');
   }
 
   const data = await issueNonce(env.SOLINK_KV, pubkey);
-  return jsonResponse(env, data);
+  return jsonResponse(request, data);
 }
 
 async function handleVerifyRequest(request, env) {
@@ -381,22 +403,22 @@ async function handleVerifyRequest(request, env) {
 
   const body = await readJson(request);
   if (!body) {
-    return errorResponse(env, 'Invalid JSON payload');
+    return errorResponse(request, 'Invalid JSON payload');
   }
 
   const { pubkey, nonce, signature, sessionTtl } = body;
   if (!pubkey || !nonce || !signature) {
-    return errorResponse(env, 'Missing fields');
+    return errorResponse(request, 'Missing fields');
   }
 
   const nonceRecord = await consumeNonce(env.SOLINK_KV, pubkey);
   if (!isNonceValid(nonceRecord, nonce)) {
-    return errorResponse(env, 'Invalid or expired nonce', 401);
+    return errorResponse(request, 'Invalid or expired nonce', 401);
   }
 
   const isValidSignature = await verifyEd25519Signature(nonce, signature, pubkey);
   if (!isValidSignature) {
-    return errorResponse(env, 'Invalid signature', 401);
+    return errorResponse(request, 'Invalid signature', 401);
   }
 
   // Use custom session TTL if provided, otherwise use default
@@ -405,7 +427,7 @@ async function handleVerifyRequest(request, env) {
     : DEFAULT_SESSION_TTL_SECONDS;
   
   const token = await createSession(env.SOLINK_KV, pubkey, ttlSeconds);
-  return jsonResponse(env, {
+  return jsonResponse(request, {
     token,
     user: { pubkey },
   });
@@ -419,31 +441,31 @@ async function handleSendMessage(request, env) {
   const token = extractBearerToken(request);
   const senderPubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!senderPubkey) {
-    return errorResponse(env, 'Unauthorized', 401);
+    return errorResponse(request, 'Unauthorized', 401);
   }
 
   const body = await readJson(request);
   if (!body) {
-    return errorResponse(env, 'Invalid JSON payload');
+    return errorResponse(request, 'Invalid JSON payload');
   }
 
   const { to, text, timestamp, ciphertext, nonce, version, tokenPreview } = body;
   if (!to || (!text && !ciphertext)) {
-    return errorResponse(env, 'Missing fields');
+    return errorResponse(request, 'Missing fields');
   }
 
   const recipientPubkey = normalizePubkey(to);
   if (!recipientPubkey || !isValidPubkey(recipientPubkey)) {
-    return errorResponse(env, 'Invalid recipient', 400);
+    return errorResponse(request, 'Invalid recipient', 400);
   }
 
   if (recipientPubkey === senderPubkey) {
-    return errorResponse(env, 'Cannot send messages to yourself');
+    return errorResponse(request, 'Cannot send messages to yourself');
   }
 
   const allowed = await checkAndIncrementRateLimit(env.SOLINK_KV, senderPubkey);
   if (!allowed) {
-    return errorResponse(env, 'Rate limit exceeded', 429);
+    return errorResponse(request, 'Rate limit exceeded', 429);
   }
 
   const senderProfile = await readProfile(env.SOLINK_KV, senderPubkey);
@@ -454,7 +476,7 @@ async function handleSendMessage(request, env) {
   const sanitizedCiphertext = typeof ciphertext === 'string' && ciphertext.length ? ciphertext : null;
   const sanitizedNonce = typeof nonce === 'string' && nonce.length ? nonce : null;
   if (sanitizedCiphertext && !sanitizedNonce) {
-    return errorResponse(env, 'Missing nonce for encrypted message');
+    return errorResponse(request, 'Missing nonce for encrypted message');
   }
   const encryptionVersion =
     Number.isFinite(version) && version > 0 ? Number(version) : sanitizedCiphertext ? 1 : null;
@@ -509,9 +531,9 @@ async function handleSendMessage(request, env) {
     await inboxStore(env, recipientPubkey, message);
   } catch (error) {
     console.error('Inbox store error', error);
-    return errorResponse(env, error.message || 'Failed to enqueue message', 500);
+    return errorResponse(request, error.message || 'Failed to enqueue message', 500);
   }
-  return jsonResponse(env, { ok: true, messageId: message.id });
+  return jsonResponse(request, { ok: true, messageId: message.id });
 }
 
 async function handleInboxPoll(request, env) {
@@ -522,7 +544,7 @@ async function handleInboxPoll(request, env) {
   const token = extractBearerToken(request);
   const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!pubkey) {
-    return errorResponse(env, 'Unauthorized', 401);
+    return errorResponse(request, 'Unauthorized', 401);
   }
 
   const url = new URL(request.url);
@@ -538,7 +560,7 @@ async function handleInboxPoll(request, env) {
       messages = await inboxPull(env, pubkey, INBOX_PULL_LIMIT);
     } catch (error) {
       console.error('Inbox pull error', error);
-      return errorResponse(env, error.message || 'Inbox fetch failed', 500);
+      return errorResponse(request, error.message || 'Inbox fetch failed', 500);
     }
     if (messages.length || waitMs === 0 || Date.now() - start >= waitMs) {
       const normalizedMessages = messages.map((message) => ({
@@ -546,7 +568,7 @@ async function handleInboxPoll(request, env) {
         from: normalizePubkey(message.from) || message.from,
         to: normalizePubkey(message.to) || pubkey,
       }));
-      return jsonResponse(env, { messages: normalizedMessages });
+      return jsonResponse(request, { messages: normalizedMessages });
     }
     const elapsed = Date.now() - start;
     const remaining = waitMs - elapsed;
@@ -562,17 +584,17 @@ async function handleAckMessages(request, env) {
   const token = extractBearerToken(request);
   const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!pubkey) {
-    return errorResponse(env, 'Unauthorized', 401);
+    return errorResponse(request, 'Unauthorized', 401);
   }
 
   const body = await readJson(request);
   const ids = Array.isArray(body?.ids) ? body.ids.filter((id) => typeof id === 'string' && id.length) : [];
   if (!ids.length) {
-    return jsonResponse(env, { ok: true });
+    return jsonResponse(request, { ok: true });
   }
 
   await inboxAck(env, pubkey, ids);
-  return jsonResponse(env, { ok: true });
+  return jsonResponse(request, { ok: true });
 }
 
 async function handleProfileMe(request, env) {
@@ -583,11 +605,11 @@ async function handleProfileMe(request, env) {
   const token = extractBearerToken(request);
   const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!pubkey) {
-    return errorResponse(env, 'Unauthorized', 401);
+    return errorResponse(request, 'Unauthorized', 401);
   }
 
   const profile = (await readProfile(env.SOLINK_KV, pubkey)) || createProfile(pubkey);
-  return jsonResponse(env, { profile: sanitizeProfile(profile) });
+  return jsonResponse(request, { profile: sanitizeProfile(profile) });
 }
 
 async function handleNicknameUpdate(request, env) {
@@ -598,26 +620,26 @@ async function handleNicknameUpdate(request, env) {
   const token = extractBearerToken(request);
   const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!pubkey) {
-    return errorResponse(env, 'Unauthorized', 401);
+    return errorResponse(request, 'Unauthorized', 401);
   }
 
   const body = await readJson(request);
   const nicknameValue = body?.nickname;
   const normalized = normalizeNickname(nicknameValue);
   if (!normalized) {
-    return errorResponse(env, 'Invalid nickname');
+    return errorResponse(request, 'Invalid nickname');
   }
 
   const existingProfile = await readProfile(env.SOLINK_KV, pubkey);
   const currentNickname = existingProfile?.nickname || null;
 
   if (currentNickname === normalized) {
-    return jsonResponse(env, { profile: sanitizeProfile(existingProfile) });
+    return jsonResponse(request, { profile: sanitizeProfile(existingProfile) });
   }
 
   const mappedPubkey = await env.SOLINK_KV.get(nicknameKey(normalized));
   if (mappedPubkey && mappedPubkey !== pubkey) {
-    return errorResponse(env, 'Nickname already taken', 409);
+    return errorResponse(request, 'Nickname already taken', 409);
   }
 
   if (currentNickname && currentNickname !== normalized) {
@@ -637,7 +659,7 @@ async function handleNicknameUpdate(request, env) {
   await env.SOLINK_KV.put(profileKey(pubkey), JSON.stringify(profile));
   await env.SOLINK_KV.put(nicknameKey(normalized), pubkey);
 
-  return jsonResponse(env, { profile: sanitizeProfile(profile) });
+  return jsonResponse(request, { profile: sanitizeProfile(profile) });
 }
 
 async function handleEncryptionKeyUpdate(request, env) {
@@ -648,13 +670,13 @@ async function handleEncryptionKeyUpdate(request, env) {
   const token = extractBearerToken(request);
   const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
   if (!pubkey) {
-    return errorResponse(env, 'Unauthorized', 401);
+    return errorResponse(request, 'Unauthorized', 401);
   }
 
   const body = await readJson(request);
   const publicKey = typeof body?.publicKey === 'string' ? body.publicKey.trim() : '';
   if (!publicKey || publicKey.length < 32) {
-    return errorResponse(env, 'Invalid encryption key');
+    return errorResponse(request, 'Invalid encryption key');
   }
 
   const existingProfile = (await readProfile(env.SOLINK_KV, pubkey)) || createProfile(pubkey);
@@ -668,7 +690,7 @@ async function handleEncryptionKeyUpdate(request, env) {
   };
 
   await env.SOLINK_KV.put(profileKey(pubkey), JSON.stringify(profile));
-  return jsonResponse(env, { profile: sanitizeProfile(profile) });
+  return jsonResponse(request, { profile: sanitizeProfile(profile) });
 }
 
 async function handleProfileLookup(request, url, env) {
@@ -679,12 +701,12 @@ async function handleProfileLookup(request, url, env) {
   const nicknameParam = url.searchParams.get('nickname') || url.searchParams.get('nick');
   const normalized = normalizeNickname(nicknameParam);
   if (!normalized) {
-    return errorResponse(env, 'Invalid nickname');
+    return errorResponse(request, 'Invalid nickname');
   }
 
   const mappedPubkey = await env.SOLINK_KV.get(nicknameKey(normalized));
   if (!mappedPubkey) {
-    return errorResponse(env, 'Profile not found', 404);
+    return errorResponse(request, 'Profile not found', 404);
   }
 
   const profile = (await readProfile(env.SOLINK_KV, mappedPubkey)) || {
@@ -693,7 +715,7 @@ async function handleProfileLookup(request, url, env) {
     displayName: `@${normalized}`,
   };
 
-  return jsonResponse(env, { profile: sanitizeProfile(profile) });
+  return jsonResponse(request, { profile: sanitizeProfile(profile) });
 }
 
 async function handleProfileByKey(request, url, env) {
@@ -704,15 +726,15 @@ async function handleProfileByKey(request, url, env) {
   const pubkeyParam = url.searchParams.get('pubkey') || url.searchParams.get('pk');
   const normalized = normalizePubkey(pubkeyParam);
   if (!normalized || !isValidPubkey(normalized)) {
-    return errorResponse(env, 'Invalid pubkey', 400);
+    return errorResponse(request, 'Invalid pubkey', 400);
   }
 
   const profile = await readProfile(env.SOLINK_KV, normalized);
   if (!profile) {
-    return errorResponse(env, 'Profile not found', 404);
+    return errorResponse(request, 'Profile not found', 404);
   }
 
-  return jsonResponse(env, { profile: sanitizeProfile(profile) });
+  return jsonResponse(request, { profile: sanitizeProfile(profile) });
 }
 
 function profileKey(pubkey) {
@@ -784,7 +806,7 @@ async function handleTokenPreview(request, url, env) {
 
   const tokenAddress = url.searchParams.get('address');
   if (!tokenAddress || !BASE58_REGEX.test(tokenAddress)) {
-    return errorResponse(env, 'Invalid token address');
+    return errorResponse(request, 'Invalid token address');
   }
 
   try {
@@ -876,7 +898,7 @@ async function handleTokenPreview(request, url, env) {
 
     // If we have no data at all, return error
     if (!pumpData && !dexData && !heliusData) {
-      return errorResponse(env, 'Token not found', 404);
+      return errorResponse(request, 'Token not found', 404);
     }
 
     // Build unified preview object
@@ -1010,10 +1032,10 @@ async function handleTokenPreview(request, url, env) {
       fetchedAt: Date.now(),
     };
 
-    return jsonResponse(env, { preview });
+    return jsonResponse(request, { preview });
   } catch (error) {
     console.error('Token preview error:', error);
-    return errorResponse(env, 'Failed to fetch token data', 500);
+    return errorResponse(request, 'Failed to fetch token data', 500);
   }
 }
 
@@ -1027,7 +1049,7 @@ async function handleDexPairPreview(request, url, env) {
 
   const pairAddress = url.searchParams.get('pair');
   if (!pairAddress || pairAddress.length < 30 || pairAddress.length > 50) {
-    return errorResponse(env, 'Invalid pair address');
+    return errorResponse(request, 'Invalid pair address');
   }
 
   try {
@@ -1037,14 +1059,14 @@ async function handleDexPairPreview(request, url, env) {
     });
 
     if (!dexResponse.ok) {
-      return errorResponse(env, 'Pair not found', 404);
+      return errorResponse(request, 'Pair not found', 404);
     }
 
     const dexData = await dexResponse.json();
     const pair = dexData.pair || dexData.pairs?.[0];
     
     if (!pair) {
-      return errorResponse(env, 'Pair not found', 404);
+      return errorResponse(request, 'Pair not found', 404);
     }
 
     // Extract token info from pair
@@ -1101,11 +1123,177 @@ async function handleDexPairPreview(request, url, env) {
       socials: socials.length > 0 ? socials : null,
     };
 
-    return jsonResponse(env, preview);
+    return jsonResponse(request, preview);
   } catch (error) {
     console.error('DexScreener pair preview error:', error);
-    return errorResponse(env, 'Failed to fetch pair data', 500);
+    return errorResponse(request, 'Failed to fetch pair data', 500);
   }
+}
+
+// Link preview - fetch Open Graph metadata from URLs
+async function handleLinkPreview(request, url, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const targetUrl = url.searchParams.get('url');
+  if (!targetUrl) {
+    return errorResponse(request, 'Missing url parameter');
+  }
+
+  // Validate URL
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(targetUrl);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      return errorResponse(request, 'Invalid URL protocol');
+    }
+  } catch {
+    return errorResponse(request, 'Invalid URL');
+  }
+
+  // Block internal/localhost URLs
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname.startsWith('127.') || hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname === '0.0.0.0') {
+    return errorResponse(request, 'Internal URLs not allowed', 403);
+  }
+
+  try {
+    // Fetch the page with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+    const response = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'SOLink/1.0 (Link Preview Bot)',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return errorResponse(request, 'Failed to fetch URL', response.status);
+    }
+
+    const contentType = response.headers.get('Content-Type') || '';
+    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
+      return errorResponse(request, 'URL is not an HTML page');
+    }
+
+    // Limit response size (first 100KB should be enough for meta tags)
+    const text = await response.text();
+    const html = text.slice(0, 100000);
+
+    // Parse Open Graph and meta tags
+    const preview = parseOpenGraphTags(html, parsedUrl);
+
+    // Add cache headers
+    return jsonResponse(request, preview, {
+      headers: {
+        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+      },
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return errorResponse(request, 'Request timeout', 504);
+    }
+    console.error('Link preview error:', error);
+    return errorResponse(request, 'Failed to fetch link preview', 500);
+  }
+}
+
+// Parse Open Graph meta tags from HTML
+function parseOpenGraphTags(html, url) {
+  const getMetaContent = (property) => {
+    // Try og: tags first
+    const ogMatch = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']og:${property}["'][^>]+content=["']([^"']+)["']`, 'i'))
+      || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:${property}["']`, 'i'));
+    if (ogMatch) return ogMatch[1];
+
+    // Try twitter: tags
+    const twitterMatch = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']twitter:${property}["'][^>]+content=["']([^"']+)["']`, 'i'))
+      || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']twitter:${property}["']`, 'i'));
+    if (twitterMatch) return twitterMatch[1];
+
+    // Try standard meta tags
+    const metaMatch = html.match(new RegExp(`<meta[^>]+name=["']${property}["'][^>]+content=["']([^"']+)["']`, 'i'))
+      || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${property}["']`, 'i'));
+    if (metaMatch) return metaMatch[1];
+
+    return null;
+  };
+
+  // Get title
+  let title = getMetaContent('title');
+  if (!title) {
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    title = titleMatch ? titleMatch[1].trim() : null;
+  }
+
+  // Get description
+  const description = getMetaContent('description');
+
+  // Get image
+  let image = getMetaContent('image');
+  if (image && !image.startsWith('http')) {
+    // Convert relative URL to absolute
+    try {
+      image = new URL(image, url.origin).href;
+    } catch {
+      image = null;
+    }
+  }
+
+  // Get site name
+  let siteName = getMetaContent('site_name');
+  if (!siteName) {
+    siteName = url.hostname.replace(/^www\./, '');
+  }
+
+  // Get favicon
+  let favicon = null;
+  const faviconMatch = html.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]+href=["']([^"']+)["']/i)
+    || html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["'](?:shortcut )?icon["']/i);
+  if (faviconMatch) {
+    favicon = faviconMatch[1];
+    if (!favicon.startsWith('http')) {
+      try {
+        favicon = new URL(favicon, url.origin).href;
+      } catch {
+        favicon = null;
+      }
+    }
+  }
+  if (!favicon) {
+    favicon = `${url.origin}/favicon.ico`;
+  }
+
+  return {
+    url: url.href,
+    title: title ? decodeHtmlEntities(title).slice(0, 200) : null,
+    description: description ? decodeHtmlEntities(description).slice(0, 500) : null,
+    image: image || null,
+    siteName: siteName ? decodeHtmlEntities(siteName).slice(0, 100) : null,
+    favicon: favicon,
+  };
+}
+
+// Decode HTML entities
+function decodeHtmlEntities(text) {
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
 }
 
 // Image proxy to bypass CORS restrictions
@@ -1116,7 +1304,7 @@ async function handleImageProxy(request, url, env) {
 
   const imageUrl = url.searchParams.get('url');
   if (!imageUrl) {
-    return errorResponse(env, 'Missing url parameter');
+    return errorResponse(request, 'Missing url parameter');
   }
 
   // Only allow certain domains for security
@@ -1135,7 +1323,7 @@ async function handleImageProxy(request, url, env) {
     const isAllowed = allowedDomains.some(domain => parsedUrl.hostname.endsWith(domain));
     
     if (!isAllowed) {
-      return errorResponse(env, 'Domain not allowed', 403);
+      return errorResponse(request, 'Domain not allowed', 403);
     }
 
     const response = await fetch(imageUrl, {
@@ -1156,12 +1344,12 @@ async function handleImageProxy(request, url, env) {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=86400', // Cache for 24 hours
-        ...buildCorsHeaders(env),
+        ...buildCorsHeaders(request),
       },
     });
   } catch (error) {
     console.error('Image proxy error:', error);
-    return errorResponse(env, 'Failed to fetch image', 500);
+    return errorResponse(request, 'Failed to fetch image', 500);
   }
 }
 

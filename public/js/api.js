@@ -332,3 +332,14 @@ export async function fetchDexPairPreview(pairAddress) {
     timeoutMs: 10000, // 10 second timeout for external API calls
   });
 }
+
+// Link preview for generic URLs (Open Graph)
+export async function fetchLinkPreviewApi(url) {
+  if (!url) {
+    throw new Error('Missing URL');
+  }
+  return request(`/link-preview?url=${encodeURIComponent(url)}`, {
+    method: 'GET',
+    timeoutMs: 8000, // 8 second timeout
+  });
+}

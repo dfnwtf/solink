@@ -1,0 +1,9 @@
+# SOLink robots.txt
+User-agent: *
+Allow: /
+Disallow: /app/
+Disallow: /api/
+
+# Sitemap
+Sitemap: https://solink.chat/sitemap.xml
+
