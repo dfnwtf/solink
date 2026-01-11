@@ -1,87 +1,185 @@
-# SOLink – Secure Wallet-to-Wallet Messenger
+# 🔐 SOLink — Secure Web3 Messenger on Solana
 
-SOLink is a privacy-first messenger built around Solana wallets. The UI, queueing layer, and encryption pipeline are engineered so that only wallet owners can read their conversations—no centralized server ever sees plaintext.
+<p align="center">
+  <img src="public/og-image.png" alt="SOLink" width="600">
+</p>
 
-## Highlights
+<p align="center">
+  <strong>End-to-end encrypted wallet-to-wallet messaging</strong><br>
+  No registration. No phone number. Just your Phantom wallet.
+</p>
 
-- **Wallet-native UX.** Phantom (or any Solana wallet) doubles as identity and authentication. Internal IndexedDB namespaces (`solink-db-wallet-...`) isolate conversations per wallet.
-- **Durable Object queue.** Every outgoing message lands in a Cloudflare DO, waits for `/messages/ack`, and is removed atomically. Even if a reader reloads mid-session, the queue replays undeciphered ciphertext until it’s acknowledged.
-- **End-to-end encryption.**
-  - Clients generate X25519 pairs (TweetNaCl) and publish only the public key.
-  - For each contact we compute a shared secret (Diffie–Hellman) and cache it in IndexedDB.
-  - Payloads are encrypted with XSalsa20-Poly1305 before they ever touch the worker. Decryption happens purely in the browser.
-- **Modern frontend.** Dark three-column layout (nav → chats → conversation & info panel), responsive CSS, and stateful search/favorites.
-- **Cloudflare Worker + KV.** Profiles, nicknames, encryption keys, and rate limits live in KV; the worker simply brokers ciphertext between wallets.
-
-## Tech Stack
-
-| Layer      | Technologies |
-|-----------|--------------|
-| Frontend  | HTML/CSS, Vanilla JS, TweetNaCl, IndexedDB |
-| Backend   | Cloudflare Workers, KV, Durable Objects |
-| Delivery  | Long-poll (`/inbox/poll?wait=15000`) + ACK (`/messages/ack`) |
-
-## Quick Start
-
-1. Clone or download the repository.
-2. Open `public/app.html` in your browser.
-3. Connect Phantom — encryption keys are generated on the fly and messages are routed through the secure queue automatically.
-
-## Security Notes
-
-- Phantom never exposes private keys; the dApp requests only signatures.
-- Encryption keys are generated client-side and stored in IndexedDB (`solink-db-wallet-*`).
-- Only public keys are uploaded. Worker receives ciphertext + nonce + metadata.
-- Durable Object acts as a sealed queue: messages persist until `/messages/ack` confirms delivery.
-- Long-poll prevents replay attacks: each poll clears the queue atomically, so ciphertext can’t reappear once acked.
-
-```js
-// simplified send flow (client-side)
-const secret = await ensureSessionSecret(contactPubkey);
-const encrypted = secret && encryptWithSecret(secret, plaintext);
-await sendMessage({
-  to: contactPubkey,
-  text: encrypted ? encrypted.ciphertext : plaintext,
-  nonce: encrypted?.nonce,
-  version: encrypted?.version,
-  timestamp: Date.now(),
-});
-```
-
-```js
-// worker/worker.js (store snippet)
-const message = {
-  id: crypto.randomUUID(),
-  from: senderPubkey,
-  to: recipientPubkey,
-  text: sanitizedText,          // optional fallback
-  ciphertext: sanitizedCiphertext,
-  nonce: sanitizedNonce,
-  encryptionVersion,
-  timestamp: Date.now(),
-};
-await inboxStore(env, recipientPubkey, message);
-```
-
-## Repository Layout
-
-| Path   | Description                              |
-|--------|------------------------------------------|
-| `public/` | Frontend assets (HTML/CSS/JS, UI)         |
-| `worker/` | Cloudflare Worker & Durable Object queue |
-| `docs/`   | Design notes & UX drafts                 |
-| `wrangler.toml` | Deployment config (bindings, routes)    |
-
-## Roadmap
-
-- [x] New UI/UX
-- [x] Durable Object queue + ACK
-- [x] Global @nicknames
-- [x] End-to-end encryption
-- [ ] Design polish & onboarding animation
-- [ ] Native push notifications
+<p align="center">
+  <a href="https://solink.chat">🌐 Live Demo</a> •
+  <a href="https://solink.chat/app">💬 Open Messenger</a> •
+  <a href="#security">🔒 Security</a>
+</p>
 
 ---
 
-To replicate locally: clone the repo, run `wrangler dev`, and open `public/app.html?v=dev`. All secrets are tied to Phantom/IndexedDB, so the repo is safe to keep public.
+## ✨ Features
 
+- **🔑 Wallet-Native Identity** — Your Solana wallet is your identity. No signup, no passwords.
+- **🔒 End-to-End Encryption** — Messages encrypted with NaCl (XSalsa20-Poly1305). Server never sees plaintext.
+- **💸 Send SOL in Chat** — Transfer SOL directly in conversations.
+- **📱 PWA Support** — Install as app on mobile devices.
+- **🌙 Dark Mode** — Beautiful dark UI designed for crypto natives.
+- **💾 Encrypted Backups** — Export your data with AES-256 password protection.
+
+---
+
+## 🛡️ Security
+
+SOLink takes security seriously. We've achieved top ratings across security audits:
+
+| Service | Rating | Details |
+|---------|--------|---------|
+| **Security Headers** | A+ | CSP, HSTS, X-Frame-Options |
+| **Mozilla Observatory** | A+ (125/100) | 10/10 tests passed |
+| **SSL Labs** | B | TLS 1.2/1.3 |
+| **ImmuniWeb** | A | HTTPS, CSP verified |
+
+### Encryption Stack
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Your Browser                        │
+├─────────────────────────────────────────────────────────┤
+│  Phantom Wallet → Ed25519 signature for auth            │
+│  TweetNaCl      → X25519 key exchange                   │
+│  XSalsa20-Poly1305 → Message encryption                 │
+│  IndexedDB      → Local encrypted storage               │
+└─────────────────────────────────────────────────────────┘
+                            │
+                    (only ciphertext)
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│               Cloudflare Workers                         │
+├─────────────────────────────────────────────────────────┤
+│  KV Storage     → Profiles, public keys                 │
+│  Durable Objects → Message queue (encrypted)            │
+│  No plaintext ever touches the server                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Security Features
+
+- ✅ **CORS** restricted to `solink.chat`
+- ✅ **CSP** prevents XSS attacks
+- ✅ **HSTS** enforces HTTPS
+- ✅ **No inline scripts** — all JS in external files
+- ✅ **Encrypted backups** with AES-256-GCM
+- ✅ **Rate limiting** — 60 messages/minute
+- ✅ **Nonce-based auth** — replay attack protection
+
+---
+
+## 🏗️ Tech Stack
+
+| Layer | Technologies |
+|-------|--------------|
+| **Frontend** | Vanilla JS, TweetNaCl, IndexedDB, CSS3 |
+| **Backend** | Cloudflare Workers, KV, Durable Objects |
+| **Encryption** | NaCl (X25519 + XSalsa20-Poly1305) |
+| **Blockchain** | Solana Web3.js, Phantom Wallet |
+
+---
+
+## 📁 Project Structure
+
+```
+SOLink/
+├── public/
+│   ├── app/           # Main messenger app
+│   ├── css/           # Stylesheets
+│   ├── js/            # Frontend JavaScript
+│   │   ├── chat.js    # Main chat logic
+│   │   ├── api.js     # API client
+│   │   ├── db.js      # IndexedDB operations
+│   │   └── main.js    # Auth & wallet connection
+│   └── index.html     # Landing page
+├── worker/
+│   ├── worker.js      # Cloudflare Worker
+│   ├── inbox-do.js    # Durable Object queue
+│   └── utils/         # Crypto, nonce, rate limiting
+└── docs/              # Documentation
+```
+
+---
+
+## 🚀 Quick Start
+
+### Use Live Version
+1. Go to [solink.chat](https://solink.chat)
+2. Click "Open Messenger"
+3. Connect your Phantom wallet
+4. Start chatting!
+
+### Run Locally
+```bash
+# Clone repository
+git clone https://github.com/dfnwtf/solink.git
+cd solink
+
+# Install Wrangler CLI
+npm install -g wrangler
+
+# Configure wrangler.toml with your credentials
+# (copy from wrangler.toml.example)
+
+# Run locally
+wrangler dev
+
+# Open http://localhost:8787/app
+```
+
+---
+
+## 🔐 How Encryption Works
+
+1. **Key Generation**: On first launch, client generates X25519 keypair
+2. **Key Exchange**: Public keys stored on server, shared secret computed via Diffie-Hellman
+3. **Message Encryption**: Each message encrypted with unique nonce using XSalsa20-Poly1305
+4. **Server Role**: Only sees ciphertext, never plaintext
+
+```javascript
+// Simplified encryption flow
+const sharedSecret = nacl.box.before(recipientPublicKey, mySecretKey);
+const nonce = nacl.randomBytes(24);
+const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
+// Only ciphertext + nonce sent to server
+```
+
+---
+
+## 📋 Roadmap
+
+- [x] End-to-end encryption
+- [x] Durable Object message queue
+- [x] Global @nicknames
+- [x] Send SOL in chat
+- [x] Security hardening (A+ rating)
+- [x] Encrypted backups
+- [x] SEO & sitemap
+- [ ] Push notifications
+- [ ] Group chats
+- [ ] File sharing
+- [ ] Mobile app (React Native)
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please read our security guidelines before submitting PRs.
+
+---
+
+## 📄 License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  Built with 💜 on Solana
+</p>
