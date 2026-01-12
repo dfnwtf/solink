@@ -28,7 +28,7 @@
 
 ---
 
-## 🛡️ Security
+## Security
 
 SOLink takes security seriously. We've achieved top ratings across security audits:
 
