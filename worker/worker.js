@@ -25,6 +25,7 @@ const PROFILE_PREFIX = 'profile:';
 const NICKNAME_PREFIX = 'nickname:';
 const NICKNAME_REGEX = /^[a-z0-9_.-]{3,24}$/;
 const INBOX_PULL_LIMIT = MAX_BATCH;
+const NICKNAME_CHANGE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function sessionKey(token) {
   return `${SESSION_PREFIX}${token}`;
@@ -637,6 +638,19 @@ async function handleNicknameUpdate(request, env) {
     return jsonResponse(request, { profile: sanitizeProfile(existingProfile) });
   }
 
+  // Check nickname change cooldown (only if user already has a nickname)
+  if (currentNickname) {
+    const lastChange = existingProfile?.nicknameChangedAt || 0;
+    const now = Date.now();
+    const timeSinceLastChange = now - lastChange;
+    
+    if (timeSinceLastChange < NICKNAME_CHANGE_COOLDOWN_MS) {
+      const remainingMs = NICKNAME_CHANGE_COOLDOWN_MS - timeSinceLastChange;
+      const remainingDays = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+      return errorResponse(request, `Nickname can only be changed once every 7 days. Try again in ${remainingDays} day(s).`, 429);
+    }
+  }
+
   const mappedPubkey = await env.SOLINK_KV.get(nicknameKey(normalized));
   if (mappedPubkey && mappedPubkey !== pubkey) {
     return errorResponse(request, 'Nickname already taken', 409);
@@ -652,6 +666,7 @@ async function handleNicknameUpdate(request, env) {
     pubkey,
     nickname: normalized,
     displayName: `@${normalized}`,
+    nicknameChangedAt: now,
     updatedAt: now,
     createdAt: existingProfile?.createdAt || now,
   };
@@ -785,6 +800,7 @@ function sanitizeProfile(profile) {
     displayName: profile.nickname ? `@${profile.nickname}` : profile.displayName || null,
     avatarSeed: profile.avatarSeed || null,
     encryptionPublicKey: profile.encryptionPublicKey || null,
+    nicknameChangedAt: profile.nicknameChangedAt || null,
     createdAt: profile.createdAt || null,
     updatedAt: profile.updatedAt || null,
   };
