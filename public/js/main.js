@@ -314,7 +314,7 @@ function getProvider() {
 }
 
 function redirectToPhantomApp() {
-  // Use deeplink connect instead of browse
+  // Use deeplinks for mobile connection (2-step flow: connect + sign)
   initiateMobileConnect();
 }
 

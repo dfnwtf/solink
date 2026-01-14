@@ -250,13 +250,46 @@ import {
   exportLocalData,
   importLocalData,
   deleteMessagesForContact,
+  updateMessageMeta as updateMessageMetaInDb,
 } from "./db.js";
 
 const POLL_LONG_WAIT_MS = 15000;
 const POLL_RETRY_DELAY_MS = 1000;
 const MAX_MESSAGE_LENGTH = 2000;
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const NICKNAME_REGEX = /^[a-z0-9_.-]{3,24}$/;
+const NICKNAME_REGEX = /^[a-z][a-z0-9_]{2,15}$/;
+const NICKNAME_BLOCKLIST = new Set([
+  // Administrative
+  "admin", "administrator", "mod", "moderator", "support", "help", "official",
+  "staff", "team", "owner", "founder", "ceo", "cto", "dev", "developer",
+  // Brand - SOLink
+  "solink", "so_link", "solink_official", "solink_support", "solink_team",
+  "solink_admin", "solinkapp", "solinkchat",
+  // Brand - Solana ecosystem
+  "solana", "phantom", "jupiter", "raydium", "orca", "marinade", "magic_eden",
+  "magiceden", "tensor", "jito", "pyth", "serum", "mango", "drift", "kamino",
+  "helium", "render", "bonk", "wif", "popcat", "samo",
+  // Crypto exchanges & wallets
+  "binance", "coinbase", "kraken", "okx", "bybit", "kucoin", "bitget", "mexc",
+  "gateio", "huobi", "ftx", "gemini", "bitstamp", "metamask", "trustwallet",
+  "ledger", "trezor", "exodus", "backpack",
+  // System & technical
+  "system", "bot", "root", "null", "undefined", "api", "server", "database",
+  "console", "error", "test", "debug", "config", "settings",
+  // Security & auth
+  "security", "secure", "verify", "verified", "verification", "auth", "login",
+  "password", "authenticate", "2fa", "mfa",
+  // Scam keywords
+  "giveaway", "airdrop", "claim", "free", "bonus", "prize", "winner", "reward",
+  "promo", "promotion", "discount", "offer", "limited", "urgent", "act_now",
+  "double", "triple", "multiply", "profit", "guaranteed", "investment",
+  // Financial
+  "bank", "wallet_support", "exchange", "transfer", "payment", "withdraw",
+  "deposit", "refund", "recovery", "restore",
+  // Impersonation patterns
+  "customer_service", "customerservice", "tech_support", "techsupport",
+  "helpdesk", "help_desk", "live_support", "livesupport",
+]);
 const PROFILE_LOOKUP_COOLDOWN_MS = 5 * 60 * 1000;
 const hasWindow = typeof window !== "undefined";
 const isLocalhost = hasWindow && ["localhost", "127.0.0.1"].includes(window.location.hostname);
@@ -266,6 +299,7 @@ const DEFAULT_SOLANA_RPC = isLocalhost
     ? new URL("/api/solana", window.location.origin).toString()
     : "https://api.mainnet-beta.solana.com";
 const PAYMENT_SYSTEM_PREFIX = "__SOLINK_PAYMENT__";
+const NICKNAME_CHANGE_PREFIX = "__SOLINK_NICKNAME_CHANGE__";
 const SOLANA_EXPLORER_TX = "https://explorer.solana.com/tx/";
 const REPLY_PREFIX = "__SOLINK_REPLY__";
 const REPLY_DELIMITER = "::";
@@ -273,6 +307,8 @@ const REPLY_PREVIEW_LIMIT = 140;
 const FORWARD_PREFIX = "__SOLINK_FORWARD__";
 const FORWARD_DELIMITER = "::";
 const FORWARD_PREVIEW_LIMIT = 140;
+const REACTION_PREFIX = "__SOLINK_REACTION__";
+const AVAILABLE_REACTIONS = ["🚀", "👍", "❤️", "😂", "😮", "😢"];
 const SETTINGS_STORAGE_KEY = "solink_settings_v1";
 const DEFAULT_SETTINGS = Object.freeze({
   soundEnabled: true,
@@ -386,6 +422,7 @@ async function loadWorkspace(walletPubkey) {
 function cacheDom() {
   ui.navButtons = Array.from(document.querySelectorAll("[data-nav]"));
   ui.navReconnect = document.querySelector("[data-action=\"reconnect-wallet\"]");
+  ui.reconnectSettingsBtn = document.querySelector("[data-action=\"reconnect-settings\"]");
   ui.navInstall = document.querySelector("[data-action=\"install-app\"]");
   ui.installAppOption = document.querySelector("[data-role=\"install-app-option\"]");
   ui.installAppSettingsBtn = document.querySelector("[data-action=\"install-app-settings\"]");
@@ -679,6 +716,7 @@ function bindEvents() {
   };
 
   ui.navReconnect?.addEventListener("click", handleReconnectClick);
+  ui.reconnectSettingsBtn?.addEventListener("click", handleReconnectClick);
   ui.overlayConnectButton?.addEventListener("click", handleConnectClick);
   
   // PWA Install buttons (nav rail + settings)
@@ -843,6 +881,45 @@ function bindEvents() {
     }
   });
 
+  // Reaction button click - show picker
+  ui.messageTimeline?.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    
+    // Click on reaction add button
+    const reactionBtn = target.closest(".bubble__reaction-btn");
+    if (reactionBtn) {
+      event.stopPropagation();
+      const messageId = reactionBtn.dataset.messageId;
+      toggleReactionPicker(reactionBtn, messageId);
+      return;
+    }
+    
+    // Click on reaction in picker
+    const pickerBtn = target.closest(".reaction-picker__btn");
+    if (pickerBtn) {
+      event.stopPropagation();
+      const messageId = pickerBtn.dataset.messageId;
+      const emoji = pickerBtn.dataset.emoji;
+      hideReactionPicker();
+      await sendReaction(messageId, emoji);
+      return;
+    }
+    
+    // Click on existing reaction badge (toggle)
+    const reactionBadge = target.closest(".reaction-badge");
+    if (reactionBadge) {
+      event.stopPropagation();
+      const messageId = reactionBadge.dataset.messageId;
+      const emoji = reactionBadge.dataset.emoji;
+      await sendReaction(messageId, emoji);
+      return;
+    }
+    
+    // Click elsewhere - hide picker
+    hideReactionPicker();
+  });
+
   document.addEventListener("click", (event) => {
     if (!ui.messageMenu || ui.messageMenu.hidden) return;
     const target = event.target;
@@ -856,6 +933,7 @@ function bindEvents() {
     if (event.key === "Escape") {
       hideMessageContextMenu();
       hideForwardModal();
+      hideReactionPicker();
       if (state.replyContext) {
         clearReplyContext();
       }
@@ -944,7 +1022,21 @@ function bindEvents() {
   ui.importFileInput?.addEventListener("change", handleImportFileChange);
 
   ui.finishOnboarding?.addEventListener("click", hideOnboarding);
-  ui.closeOnboarding?.addEventListener("click", hideOnboarding);
+  ui.closeOnboarding?.addEventListener("click", () => {
+    // Only allow closing if nickname is set
+    if (state.profile?.nickname) {
+      hideOnboarding();
+    } else {
+      showToast("Please set a nickname first");
+    }
+  });
+  
+  // Block overlay click when nickname is required
+  ui.onboarding?.querySelector(".onboarding__overlay")?.addEventListener("click", () => {
+    if (state.profile?.nickname) {
+      hideOnboarding();
+    }
+  });
 }
 
 function showToast(message) {
@@ -1312,6 +1404,42 @@ function formatSolAmount(lamports) {
 
 function buildPaymentSystemText(payload) {
   return `${PAYMENT_SYSTEM_PREFIX}:${JSON.stringify(payload)}`;
+}
+
+function buildNicknameChangeText(payload) {
+  return `${NICKNAME_CHANGE_PREFIX}:${JSON.stringify(payload)}`;
+}
+
+function parseNicknameChangeMessage(text) {
+  if (typeof text !== "string") return null;
+  const prefix = `${NICKNAME_CHANGE_PREFIX}:`;
+  if (!text.startsWith(prefix)) return null;
+  try {
+    const parsed = JSON.parse(text.slice(prefix.length));
+    if (parsed && parsed.oldName && parsed.newName) {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn("Failed to parse nickname change message", error);
+  }
+  return null;
+}
+
+function ensureNicknameChangeMeta(message) {
+  if (!message) return null;
+  if (message.meta?.systemType === "nickname_change" && message.meta?.nicknameChange) {
+    return message.meta.nicknameChange;
+  }
+  const parsed = parseNicknameChangeMessage(message.text || "");
+  if (parsed) {
+    message.meta = {
+      ...(message.meta || {}),
+      systemType: "nickname_change",
+      nicknameChange: parsed,
+    };
+    return parsed;
+  }
+  return null;
 }
 
 function parsePaymentSystemMessage(text) {
@@ -1793,6 +1921,10 @@ function getMessagePreviewText(message) {
       ? `You sent ${amountLabel} SOL to ${name}`
       : `${name} sent you ${amountLabel} SOL`;
   }
+  const nicknameChange = ensureNicknameChangeMeta(message);
+  if (nicknameChange) {
+    return `Changed nickname: ${nicknameChange.oldName} → ${nicknameChange.newName}`;
+  }
   const forwardMeta = ensureForwardMeta(message);
   const replyMeta = ensureReplyMeta(message);
   const baseText = message.text || "";
@@ -2021,6 +2153,10 @@ function createMessageBubble(message, highlightQueryText) {
   if (ensurePaymentMeta(message)) {
     return createPaymentBubble(message);
   }
+  
+  if (ensureNicknameChangeMeta(message)) {
+    return createNicknameChangeBubble(message);
+  }
 
   const bubble = document.createElement("div");
   bubble.className = `bubble bubble--${message.direction === "out" ? "out" : "in"}`;
@@ -2083,6 +2219,18 @@ function createMessageBubble(message, highlightQueryText) {
   }
 
   bubble.appendChild(meta);
+  
+  // Add reactions display
+  const reactionsDisplay = createReactionsDisplay(message);
+  if (reactionsDisplay) {
+    bubble.classList.add("bubble--has-reactions");
+    bubble.appendChild(reactionsDisplay);
+  }
+  
+  // Add reaction button (hidden by default, shown on hover)
+  const reactionBtn = createReactionButton(message.id);
+  bubble.appendChild(reactionBtn);
+  
   return bubble;
 }
 
@@ -2127,6 +2275,25 @@ function createPaymentBubble(message) {
     link.textContent = "View transaction";
     meta.appendChild(link);
   }
+
+  bubble.appendChild(textEl);
+  bubble.appendChild(meta);
+  return bubble;
+}
+
+function createNicknameChangeBubble(message) {
+  const nicknameChange = ensureNicknameChangeMeta(message);
+  const bubble = document.createElement("div");
+  bubble.className = "bubble bubble--system bubble--nickname-change";
+  bubble.dataset.messageId = message.id;
+
+  const textEl = document.createElement("div");
+  textEl.className = "bubble__text";
+  textEl.innerHTML = `<span class="nickname-old">${nicknameChange.oldName}</span> changed nickname to <span class="nickname-new">${nicknameChange.newName}</span>`;
+
+  const meta = document.createElement("div");
+  meta.className = "bubble__meta bubble__meta--system";
+  meta.textContent = formatTime(message.timestamp);
 
   bubble.appendChild(textEl);
   bubble.appendChild(meta);
@@ -2930,6 +3097,256 @@ function ensureForwardMeta(message) {
   return parsed.forward;
 }
 
+// Reaction functions
+function buildReactionMessage(targetMessageId, emoji, action = "add") {
+  const payload = { targetMessageId, emoji, action, timestamp: Date.now() };
+  return `${REACTION_PREFIX}${JSON.stringify(payload)}`;
+}
+
+function createReactionsDisplay(message) {
+  const reactions = message.meta?.reactions;
+  if (!reactions || Object.keys(reactions).length === 0) {
+    return null;
+  }
+  
+  const container = document.createElement("div");
+  container.className = "bubble__reactions";
+  
+  for (const [emoji, users] of Object.entries(reactions)) {
+    if (users.length === 0) continue;
+    
+    const badge = document.createElement("button");
+    badge.className = "reaction-badge";
+    badge.type = "button";
+    badge.dataset.emoji = emoji;
+    badge.dataset.messageId = message.id;
+    
+    const myPubkey = latestAppState?.walletPubkey || getWalletPubkey();
+    if (users.includes(myPubkey)) {
+      badge.classList.add("reaction-badge--mine");
+    }
+    
+    // Only show count if more than 1 reaction
+    const countHtml = users.length > 1 ? `<span class="reaction-badge__count">${users.length}</span>` : "";
+    badge.innerHTML = `<span class="reaction-badge__emoji">${emoji}</span>${countHtml}`;
+    container.appendChild(badge);
+  }
+  
+  return container;
+}
+
+function createReactionButton(messageId) {
+  const btn = document.createElement("button");
+  btn.className = "bubble__reaction-btn";
+  btn.type = "button";
+  btn.dataset.messageId = messageId;
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>`;
+  btn.title = "Add reaction";
+  return btn;
+}
+
+function createReactionPicker(messageId) {
+  const picker = document.createElement("div");
+  picker.className = "reaction-picker";
+  picker.dataset.messageId = messageId;
+  
+  for (const emoji of AVAILABLE_REACTIONS) {
+    const btn = document.createElement("button");
+    btn.className = "reaction-picker__btn";
+    btn.type = "button";
+    btn.dataset.emoji = emoji;
+    btn.dataset.messageId = messageId;
+    btn.textContent = emoji;
+    picker.appendChild(btn);
+  }
+  
+  return picker;
+}
+
+let activeReactionPicker = null;
+
+function toggleReactionPicker(buttonEl, messageId) {
+  // Hide any existing picker
+  hideReactionPicker();
+  
+  // Create and show new picker
+  const picker = createReactionPicker(messageId);
+  const bubble = buttonEl.closest(".bubble");
+  if (bubble) {
+    bubble.appendChild(picker);
+    activeReactionPicker = picker;
+    
+    // Position picker above the button
+    requestAnimationFrame(() => {
+      picker.classList.add("is-visible");
+    });
+  }
+}
+
+function hideReactionPicker() {
+  if (activeReactionPicker) {
+    activeReactionPicker.remove();
+    activeReactionPicker = null;
+  }
+}
+
+async function sendReaction(messageId, emoji) {
+  if (!state.activeContactKey) return;
+  if (!latestAppState?.isAuthenticated) return;
+  
+  const messages = state.messages.get(state.activeContactKey) || [];
+  const message = messages.find(m => m.id === messageId);
+  if (!message) return;
+  
+  const myPubkey = latestAppState?.walletPubkey || getWalletPubkey();
+  const reactions = message.meta?.reactions || {};
+  const isRemoving = reactions[emoji]?.includes(myPubkey);
+  const action = isRemoving ? "remove" : "add";
+  
+  // Update local state immediately
+  await addReactionToMessage(messageId, emoji, state.activeContactKey);
+  
+  // Re-render messages
+  renderMessages(state.activeContactKey);
+  
+  // Send reaction to recipient
+  const reactionText = buildReactionMessage(messageId, emoji, action);
+  const contactPubkey = state.activeContactKey;
+  
+  try {
+    const sessionSecret = await ensureSessionSecret(contactPubkey);
+    if (!sessionSecret) {
+      console.warn("Cannot send reaction: no session secret");
+      return;
+    }
+    
+    const encrypted = encryptWithSecret(sessionSecret, reactionText);
+    if (!encrypted) {
+      console.warn("Cannot send reaction: encryption failed");
+      return;
+    }
+    
+    // Include sender's encryption key
+    const myEncryptionKey = state.encryptionKeys?.publicKey || state.profile?.encryptionPublicKey;
+    
+    await sendMessage({
+      to: contactPubkey,
+      ciphertext: encrypted.ciphertext,
+      nonce: encrypted.nonce,
+      version: encrypted.version,
+      timestamp: Date.now(),
+      ...(myEncryptionKey ? { senderEncryptionKey: myEncryptionKey } : {}),
+    });
+  } catch (error) {
+    console.error("Failed to send reaction:", error);
+  }
+}
+
+function parseReactionMessage(text) {
+  if (typeof text !== "string" || !text.startsWith(REACTION_PREFIX)) {
+    return null;
+  }
+  try {
+    const json = text.slice(REACTION_PREFIX.length);
+    const parsed = JSON.parse(json);
+    if (parsed.targetMessageId && parsed.emoji) {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn("Failed to parse reaction message", error);
+  }
+  return null;
+}
+
+function isReactionMessage(text) {
+  return typeof text === "string" && text.startsWith(REACTION_PREFIX);
+}
+
+async function addReactionToMessage(messageId, emoji, contactKey) {
+  const messages = state.messages.get(contactKey) || [];
+  const message = messages.find(m => m.id === messageId);
+  if (!message) return false;
+  
+  const reactions = message.meta?.reactions || {};
+  const myPubkey = latestAppState?.walletPubkey || getWalletPubkey();
+  
+  // Toggle reaction
+  if (reactions[emoji]?.includes(myPubkey)) {
+    // Remove reaction
+    reactions[emoji] = reactions[emoji].filter(p => p !== myPubkey);
+    if (reactions[emoji].length === 0) {
+      delete reactions[emoji];
+    }
+  } else {
+    // Add reaction
+    if (!reactions[emoji]) {
+      reactions[emoji] = [];
+    }
+    reactions[emoji].push(myPubkey);
+  }
+  
+  message.meta = { ...(message.meta || {}), reactions };
+  
+  // Save to IndexedDB
+  await updateMessageMeta(messageId, { reactions });
+  
+  return true;
+}
+
+async function updateMessageMeta(messageId, metaUpdate) {
+  // Update in state
+  for (const [contactKey, messages] of state.messages) {
+    const message = messages.find(m => m.id === messageId);
+    if (message) {
+      message.meta = { ...(message.meta || {}), ...metaUpdate };
+      // Save to IndexedDB
+      await updateMessageMetaInDb(messageId, message.meta);
+      break;
+    }
+  }
+}
+
+async function handleIncomingReaction(reactionData, fromPubkey) {
+  const { targetMessageId, emoji, action } = reactionData;
+  
+  // Find the message
+  for (const [contactKey, messages] of state.messages) {
+    const message = messages.find(m => m.id === targetMessageId);
+    if (message) {
+      const reactions = message.meta?.reactions || {};
+      
+      if (action === "add") {
+        if (!reactions[emoji]) {
+          reactions[emoji] = [];
+        }
+        if (!reactions[emoji].includes(fromPubkey)) {
+          reactions[emoji].push(fromPubkey);
+        }
+      } else if (action === "remove") {
+        if (reactions[emoji]) {
+          reactions[emoji] = reactions[emoji].filter(p => p !== fromPubkey);
+          if (reactions[emoji].length === 0) {
+            delete reactions[emoji];
+          }
+        }
+      }
+      
+      message.meta = { ...(message.meta || {}), reactions };
+      
+      // Save to IndexedDB
+      await updateMessageMetaInDb(targetMessageId, message.meta);
+      
+      // Re-render if this chat is active
+      if (state.activeContactKey === contactKey) {
+        renderMessages(contactKey);
+      }
+      
+      return true;
+    }
+  }
+  return false;
+}
+
 // URL regex pattern for detecting links
 const URL_REGEX = /(\b(?:https?:\/\/|www\.)[^\s<>\"\']+)/gi;
 
@@ -3693,6 +4110,24 @@ async function sendPreparedMessage({
 
   await ensureContact(normalized);
 
+  // Ensure our encryption key is published before sending
+  const keys = await ensureEncryptionKeys();
+  const localKey = keys?.publicKey;
+  
+  // Force publish if key doesn't match or not set
+  if (localKey && state.profile?.encryptionPublicKey !== localKey) {
+    console.log("[Send] Encryption key mismatch, publishing...");
+    const published = await publishEncryptionKey(true);
+    if (!published) {
+      console.warn("[Send] Failed to publish encryption key, retrying...");
+      await new Promise(r => setTimeout(r, 500));
+      await publishEncryptionKey(true);
+    }
+  } else if (!state.profile?.encryptionPublicKey) {
+    console.log("[Send] No encryption key in profile, publishing...");
+    await publishEncryptionKey(true);
+  }
+
   const trimmedDisplay = (displayText || "").slice(0, MAX_MESSAGE_LENGTH);
   const effectiveOutbound = outboundText || trimmedDisplay;
   const timestamp = Date.now();
@@ -3708,6 +4143,8 @@ async function sendPreparedMessage({
     const encrypted = encryptWithSecret(sessionSecret, effectiveOutbound);
     if (encrypted) {
       encryptionMeta = { nonce: encrypted.nonce, version: encrypted.version };
+      // Include sender's encryption key so recipient can decrypt
+      const myEncryptionKey = state.encryptionKeys?.publicKey || state.profile?.encryptionPublicKey;
       sendPayload = {
         to: normalized,
         ciphertext: encrypted.ciphertext,
@@ -3715,6 +4152,7 @@ async function sendPreparedMessage({
         version: encrypted.version,
         timestamp,
         ...(tokenPreview ? { tokenPreview } : {}),
+        ...(myEncryptionKey ? { senderEncryptionKey: myEncryptionKey } : {}),
       };
     }
   }
@@ -3872,7 +4310,12 @@ async function handleIncomingMessages(messages) {
       payload.senderDisplayName ||
       (payload.senderNickname ? `@${payload.senderNickname}` : "") ||
       "";
-    if (remoteDisplayName && !contact.localName) {
+    
+    // Detect nickname change
+    const oldName = contact.localName || "";
+    const hasNicknameChanged = remoteDisplayName && oldName && remoteDisplayName !== oldName;
+    
+    if (remoteDisplayName && (!contact.localName || hasNicknameChanged)) {
       await updateContact(from, { localName: remoteDisplayName, updatedAt: Date.now() });
       updateContactInState(from, { localName: remoteDisplayName });
       if (state.activeContactKey === from) {
@@ -3880,6 +4323,27 @@ async function handleIncomingMessages(messages) {
         updateConversationMeta(from);
       }
       renderContactList();
+      
+      // Create local system message about nickname change
+      if (hasNicknameChanged) {
+        const nicknameChangeMessage = {
+          id: `nickname-change-${Date.now()}-${crypto.randomUUID()}`,
+          contactKey: from,
+          direction: "in",
+          text: buildNicknameChangeText({ oldName, newName: remoteDisplayName }),
+          timestamp: Date.now(),
+          status: "delivered",
+          meta: {
+            systemType: "nickname_change",
+            nicknameChange: { oldName, newName: remoteDisplayName },
+          },
+        };
+        await addMessage(nicknameChangeMessage);
+        appendMessageToState(from, nicknameChangeMessage);
+        if (state.activeContactKey === from) {
+          renderMessages(from);
+        }
+      }
     } else {
       void hydrateContactProfile(from);
     }
@@ -3900,15 +4364,12 @@ async function handleIncomingMessages(messages) {
     let displayText = payload.text || "";
     if (encryptionMeta && ciphertext) {
       let decrypted = null;
-      let secret = await ensureSessionSecret(from, {
-        remoteKeyHint: payload.senderEncryptionKey || null,
-      });
-      if (secret) {
-        decrypted = decryptWithSecret(secret, ciphertext, encryptionMeta.nonce);
-      }
-      if (decrypted === null && payload.senderEncryptionKey) {
+      
+      // Always try with senderEncryptionKey first if available
+      if (payload.senderEncryptionKey) {
+        // Force create new session secret with the provided key
         await resetSessionSecret(from);
-        secret = await ensureSessionSecret(from, {
+        const secret = await ensureSessionSecret(from, {
           remoteKeyHint: payload.senderEncryptionKey,
           force: true,
         });
@@ -3916,12 +4377,32 @@ async function handleIncomingMessages(messages) {
           decrypted = decryptWithSecret(secret, ciphertext, encryptionMeta.nonce);
         }
       }
+      
+      // Fallback: try with cached/fetched key
+      if (decrypted === null) {
+        const secret = await ensureSessionSecret(from, { force: true });
+        if (secret) {
+          decrypted = decryptWithSecret(secret, ciphertext, encryptionMeta.nonce);
+        }
+      }
+      
       if (decrypted !== null) {
         displayText = decrypted;
       } else {
         console.warn("Failed to decrypt message", payload.id || "unknown");
         displayText = "[Encrypted message]";
       }
+    }
+
+    // Check if this is a reaction message
+    const reactionData = parseReactionMessage(displayText);
+    if (reactionData) {
+      await handleIncomingReaction(reactionData, from);
+      // Acknowledge the reaction message but don't store it as a regular message
+      if (messageId) {
+        ackIds.push(messageId);
+      }
+      continue;
     }
 
     let forwardMeta = null;
@@ -4019,23 +4500,102 @@ async function ensureEncryptionKeys() {
   return keys;
 }
 
-async function publishEncryptionKey() {
-  if (!latestAppState?.isAuthenticated) return;
+async function publishEncryptionKey(force = false) {
+  if (!latestAppState?.isAuthenticated) return false;
   const keys = await ensureEncryptionKeys();
   const localKey = keys?.publicKey;
-  if (!localKey) return;
+  if (!localKey) return false;
   const remoteKey = state.profile?.encryptionPublicKey || null;
-  if (remoteKey === localKey) return;
+  if (!force && remoteKey === localKey) return true;
   try {
+    console.log("[Encryption] Publishing encryption key...", { localKey: localKey?.slice(0, 20), remoteKey: remoteKey?.slice(0, 20) });
     const response = await updateEncryptionKey(localKey);
     if (response?.profile) {
       state.profile = { ...(state.profile || {}), ...response.profile };
       updateProfileHeader();
+      console.log("[Encryption] Key published successfully");
+      return true;
     }
   } catch (error) {
     console.warn("Failed to publish encryption key", error);
   }
+  return false;
 }
+
+// Sync encryption key on login - ensures key is always published
+async function syncEncryptionKey() {
+  try {
+    const keys = await ensureEncryptionKeys();
+    if (!keys?.publicKey) {
+      console.warn("[Encryption] No local keys, generating...");
+      return await resetEncryptionKeys();
+    }
+    
+    // Always force publish to ensure server has correct key
+    console.log("[Encryption] Syncing encryption key...");
+    const response = await updateEncryptionKey(keys.publicKey);
+    if (response?.profile) {
+      state.profile = { ...(state.profile || {}), ...response.profile };
+      
+      // Verify sync was successful
+      if (state.profile.encryptionPublicKey === keys.publicKey) {
+        console.log("[Encryption] Key synced successfully");
+        return true;
+      }
+    }
+    
+    // If sync failed, regenerate
+    console.warn("[Encryption] Sync failed, regenerating keys...");
+    return await resetEncryptionKeys();
+  } catch (error) {
+    console.error("[Encryption] Sync error:", error);
+    return false;
+  }
+}
+
+// Debug/repair function for encryption issues
+async function resetEncryptionKeys() {
+  console.log("[Encryption] Resetting encryption keys...");
+  
+  // Clear all session secrets
+  state.sessionSecrets.clear();
+  state.remoteEncryptionKeys.clear();
+  
+  // Generate new key pair
+  const pair = nacl.box.keyPair();
+  const newKeys = {
+    publicKey: bytesToBase64(pair.publicKey),
+    secretKey: bytesToBase64(pair.secretKey),
+    createdAt: Date.now(),
+  };
+  
+  // Save new keys
+  await saveEncryptionKeys(newKeys);
+  state.encryptionKeys = newKeys;
+  
+  // Publish to server
+  console.log("[Encryption] Publishing new key...");
+  const response = await updateEncryptionKey(newKeys.publicKey);
+  if (response?.profile) {
+    state.profile = { ...(state.profile || {}), ...response.profile };
+    updateProfileHeader();
+    console.log("[Encryption] New key published successfully");
+    showToast("Encryption keys regenerated");
+    return true;
+  }
+  
+  console.error("[Encryption] Failed to publish new key");
+  return false;
+}
+
+// Expose to console for debugging
+window.resetEncryptionKeys = resetEncryptionKeys;
+window.debugEncryption = () => {
+  console.log("Local keys:", state.encryptionKeys?.publicKey?.slice(0, 30) + "...");
+  console.log("Profile key:", state.profile?.encryptionPublicKey?.slice(0, 30) + "...");
+  console.log("Session secrets:", state.sessionSecrets.size);
+  console.log("Remote keys cached:", state.remoteEncryptionKeys.size);
+};
 async function setActiveContact(pubkey) {
   const normalized = normalizePubkey(pubkey);
   if (!normalized) {
@@ -4107,6 +4667,19 @@ function initPWA() {
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
   const wasInstalled = localStorage.getItem(PWA_INSTALLED_KEY) === "true";
+  const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+  
+  // Don't show PWA install on mobile devices
+  if (isMobile) {
+    console.log("[PWA] Mobile device - hiding install option");
+    if (ui.navInstall) {
+      ui.navInstall.setAttribute("hidden", "");
+    }
+    if (ui.installAppOption) {
+      ui.installAppOption.setAttribute("hidden", "");
+    }
+    return;
+  }
   
   // Check if already installed (standalone mode)
   if (isStandalone || wasInstalled) {
@@ -4185,6 +4758,37 @@ function initPWA() {
 
 function showInstallPromotion() {
   if (!ui.navInstall) return;
+  
+  // Don't show promotion on mobile devices
+  const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (isMobile) {
+    console.log("[PWA] Skipping promotion - mobile device");
+    ui.navInstall.setAttribute("hidden", "");
+    if (ui.installAppOption) {
+      ui.installAppOption.setAttribute("hidden", "");
+    }
+    return;
+  }
+  
+  // Don't show promotion if already installed
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
+  const wasInstalled = localStorage.getItem(PWA_INSTALLED_KEY) === "true";
+  if (isStandalone || wasInstalled) {
+    console.log("[PWA] Skipping promotion - already installed");
+    return;
+  }
+  
+  // For Chromium browsers: if no install prompt available, app is already installed
+  const browser = ui.navInstall?.dataset.browser;
+  if (browser === "chromium" && !deferredInstallPrompt) {
+    console.log("[PWA] Skipping promotion - no install prompt (already installed on device)");
+    // Hide the install button since it won't work anyway
+    ui.navInstall.setAttribute("hidden", "");
+    if (ui.installAppOption) {
+      ui.installAppOption.setAttribute("hidden", "");
+    }
+    return;
+  }
   
   const tooltipShown = localStorage.getItem(PWA_TOOLTIP_SHOWN_KEY) === "true";
   
@@ -4890,11 +5494,29 @@ function validateNickname(value) {
   if (!normalized) {
     return { ok: false, message: "Nickname is required" };
   }
+  if (normalized.length < 3) {
+    return { ok: false, message: "Nickname must be at least 3 characters" };
+  }
+  if (normalized.length > 16) {
+    return { ok: false, message: "Nickname must be 16 characters or less" };
+  }
+  if (!/^[a-z]/.test(normalized)) {
+    return { ok: false, message: "Nickname must start with a letter" };
+  }
   if (!NICKNAME_REGEX.test(normalized)) {
     return {
       ok: false,
-      message: "Use 3-24 chars: letters, numbers, dot, hyphen or underscore",
+      message: "Use only letters (a-z), numbers, and underscore",
     };
+  }
+  if (NICKNAME_BLOCKLIST.has(normalized)) {
+    return { ok: false, message: "This nickname is not allowed" };
+  }
+  // Check for blocklist partial matches (e.g. "solink_scam", "admin123")
+  for (const blocked of NICKNAME_BLOCKLIST) {
+    if (normalized.includes(blocked) || blocked.includes(normalized)) {
+      return { ok: false, message: "This nickname is not allowed" };
+    }
   }
   return { ok: true, normalized };
 }
@@ -4906,6 +5528,11 @@ function showOnboardingStep(step) {
   ui.onboarding
     .querySelectorAll(".onboarding__step")
     .forEach((node) => node.classList.toggle("is-active", node.dataset.step === step));
+  
+  // Hide close button on nickname step (nickname is required)
+  if (ui.closeOnboarding) {
+    ui.closeOnboarding.style.display = step === "nickname" ? "none" : "";
+  }
 }
 
 function hideOnboarding() {
@@ -5020,7 +5647,8 @@ async function handleAppStateChange(appState) {
       // Check if backup reminder is needed
       checkBackupReminder();
     }
-    await publishEncryptionKey();
+    // Always ensure encryption key is synced on auth
+    await syncEncryptionKey();
     await refreshContacts();
     await loadRouteContact();
   } else {

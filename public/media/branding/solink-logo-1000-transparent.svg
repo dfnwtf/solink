@@ -1,0 +1,24 @@
+<svg width="1000" height="1000" viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Crossing lines frame -->
+  <!-- Left vertical line -->
+  <line x1="200" y1="80" x2="200" y2="920" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <!-- Right vertical line -->
+  <line x1="800" y1="80" x2="800" y2="920" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <!-- Top horizontal line -->
+  <line x1="80" y1="200" x2="920" y2="200" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <!-- Bottom horizontal line -->
+  <line x1="80" y1="800" x2="920" y2="800" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+
+  <!-- SOLINK text centered -->
+  <text 
+    x="500" 
+    y="520" 
+    text-anchor="middle" 
+    dominant-baseline="middle"
+    font-family="'Space Grotesk', sans-serif" 
+    font-weight="500" 
+    font-size="115"
+    letter-spacing="0.15em"
+    fill="#FFFFFF">SOLINK</text>
+</svg>
+

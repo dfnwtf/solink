@@ -159,6 +159,25 @@ export async function setMessageStatus(id, status) {
   });
 }
 
+export async function updateMessageMeta(id, metaUpdate) {
+  return withStore(MESSAGES_STORE, 'readwrite', (store) => {
+    return new Promise((resolve, reject) => {
+      const request = store.get(id);
+      request.onsuccess = () => {
+        const message = request.result;
+        if (!message) {
+          resolve(false);
+          return;
+        }
+        message.meta = { ...(message.meta || {}), ...metaUpdate };
+        store.put(message);
+        resolve(true);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  });
+}
+
 export async function getMessagesForContact(contactKey, limit = 200) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
