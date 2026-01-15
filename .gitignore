@@ -9,3 +9,15 @@ tmp-*.js
 
 # Cursor IDE
 .cursor/
+
+# Personal/temp files
+avatar.png
+avatar.svg
+docs/
+
+# Source design files
+*.psd
+*.pdf
+
+# Security report screenshots (personal)
+public/media/screens/
