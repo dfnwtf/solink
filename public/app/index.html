@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0" />
     
     <!-- Security Headers -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.skypack.dev https://cdn.jsdelivr.net https://esm.sh; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://solink.chat https://*.helius.xyz https://*.solana.com wss://*.helius.xyz wss://*.solana.com https://api.dexscreener.com https://frontend-api-v3.pump.fun https://ipfs.io https://arweave.net https://nftstorage.link https://cf-ipfs.com https://cdn.jsdelivr.net https://cdn.skypack.dev https://esm.sh; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.skypack.dev https://cdn.jsdelivr.net https://esm.sh; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://solink.chat https://*.helius.xyz https://*.solana.com wss://*.helius.xyz wss://*.solana.com https://api.dexscreener.com https://frontend-api-v3.pump.fun https://ipfs.io https://arweave.net https://nftstorage.link https://cf-ipfs.com https://cdn.jsdelivr.net https://cdn.skypack.dev https://esm.sh https://dfn.wtf; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     
     <!-- Primary Meta Tags -->
@@ -56,7 +56,7 @@
       .onboarding { display: none; }
     </style>
     
-    <link rel="stylesheet" href="/css/style.css?v=20241130z28" />
+    <link rel="stylesheet" href="/css/style.css?v=20241201c9" />
     <script type="importmap">
       {
         "imports": {
@@ -105,6 +105,10 @@
           <button type="button" class="nav-rail__item" data-nav="profile">
             <span class="nav-rail__icon icon-profile"></span>
             <span class="nav-rail__label">Profile</span>
+          </button>
+          <button type="button" class="nav-rail__item" data-nav="scanner">
+            <span class="nav-rail__icon icon-scanner"></span>
+            <span class="nav-rail__label">Scan</span>
           </button>
           <button type="button" class="nav-rail__item" data-nav="settings">
             <span class="nav-rail__icon icon-settings"></span>
@@ -389,6 +393,38 @@
 
       </aside>
 
+      <!-- Scanner Info Panel -->
+      <aside class="info-panel info-panel--scanner" data-role="scanner-panel" hidden>
+        <div class="info-panel__section">
+          <div class="info-panel__header">
+            <div class="scanner-panel__icon">🔍</div>
+            <div>
+              <div class="contact-name">Token Scanner</div>
+              <div class="contact-status">Powered by DFN Patrol</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-panel__section">
+          <div class="section-title">Actions</div>
+          <div class="info-panel__actions">
+            <button type="button" class="ghost-button" data-action="scanner-paste">Scan from clipboard</button>
+            <button type="button" class="ghost-button" data-action="scanner-clear">Clear history</button>
+            <button type="button" class="ghost-button" data-action="scanner-open-dfn">Open DFN Patrol</button>
+          </div>
+        </div>
+
+        <div class="info-panel__section">
+          <div class="section-title">About</div>
+          <p class="info-panel__about">
+            Token Scanner helps you analyze Solana tokens for potential risks before investing.
+          </p>
+          <p class="info-panel__about">
+            <strong>How to use:</strong> Paste any Solana token mint address in the chat and get an instant security report with trust score, holder analysis, and risk flags.
+          </p>
+        </div>
+      </aside>
+
       <!-- Mobile Bottom Navigation -->
       <nav class="mobile-nav" data-role="mobile-nav">
         <button type="button" class="mobile-nav__item is-active" data-nav="all">
@@ -406,6 +442,10 @@
         <button type="button" class="mobile-nav__item" data-nav="profile">
           <span class="icon icon-profile"></span>
           <span class="mobile-nav__label">Profile</span>
+        </button>
+        <button type="button" class="mobile-nav__item" data-nav="scanner">
+          <span class="icon icon-scanner"></span>
+          <span class="mobile-nav__label">Scan</span>
         </button>
         <button type="button" class="mobile-nav__item" data-nav="settings">
           <span class="icon icon-settings"></span>
@@ -569,9 +609,40 @@
 
     <audio data-role="notification-sound" preload="auto" src="/media/inbox.mp3" type="audio/mpeg"></audio>
 
-    <script type="module" src="/js/chat.js?v=20241130z36"></script>
+    <script type="module" src="/js/chat.js?v=20241201d2"></script>
   </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
