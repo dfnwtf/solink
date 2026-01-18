@@ -23,10 +23,9 @@
 - **🔒 End-to-End Encryption** — Messages encrypted with NaCl (XSalsa20-Poly1305). Server never sees plaintext.
 - **💸 Send SOL in Chat** — Transfer SOL directly in conversations.
 - **🔍 Token Scanner** — Instant security reports for any Solana token powered by DFN Patrol.
+- **🔗 Token Link Preview** — Paste any token link and get instant security report card.
 - **📱 PWA Support** — Install as app on desktop.
-- **🌙 Dark Mode** — Beautiful dark UI designed for crypto natives.
 - **💾 Encrypted Backups** — Export your data with AES-256 password protection.
-- **😊 Message Reactions** — React to messages with emojis.
 
 ---
 
