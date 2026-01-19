@@ -311,6 +311,11 @@ const REACTION_PREFIX = "__SOLINK_REACTION__";
 const AVAILABLE_REACTIONS = ["🚀", "👍", "❤️", "😂", "😮", "😢"];
 const SETTINGS_STORAGE_KEY = "solink_settings_v1";
 
+// Push Notifications
+const VAPID_PUBLIC_KEY = "BJoy9eenwraBkfPbPYcMTRV_Rw6z2uYfIPrGgkukwJI06A8zD_tPBec6-eB8dzi13BFxayeS7wZLPgvSvVb7WMY";
+const PUSH_ASKED_KEY = "solink_push_asked";
+const PUSH_SUBSCRIPTION_KEY = "solink_push_subscription";
+
 // Token Scanner
 const SCANNER_CONTACT_KEY = "__SOLINK_SCANNER__";
 const SCANNER_API_URL = "https://dfn.wtf/api/http-report";
@@ -561,6 +566,285 @@ function persistSettings() {
   }
 }
 
+// =====================
+// Push Notifications
+// =====================
+
+let pushUI = {
+  modal: null,
+  backdrop: null,
+  toggle: null,
+  enableBtn: null,
+  laterBtn: null,
+};
+
+function initPushUI() {
+  pushUI.modal = document.querySelector("[data-role=\"push-modal\"]");
+  pushUI.backdrop = pushUI.modal?.querySelector(".push-modal__backdrop");
+  pushUI.toggle = document.querySelector("[data-role=\"push-toggle\"]");
+  pushUI.enableBtn = document.querySelector("[data-action=\"push-enable\"]");
+  pushUI.laterBtn = document.querySelector("[data-action=\"push-later\"]");
+  
+  // Event listeners
+  pushUI.enableBtn?.addEventListener("click", handlePushEnable);
+  pushUI.laterBtn?.addEventListener("click", handlePushLater);
+  pushUI.backdrop?.addEventListener("click", handlePushLater);
+  pushUI.toggle?.addEventListener("change", handlePushToggle);
+}
+
+function isPushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+async function registerServiceWorker() {
+  if (!isPushSupported()) {
+    console.log("[Push] Not supported in this browser");
+    return null;
+  }
+  
+  try {
+    const registration = await navigator.serviceWorker.register("/sw.js");
+    console.log("[Push] Service Worker registered:", registration.scope);
+    return registration;
+  } catch (error) {
+    console.error("[Push] Service Worker registration failed:", error);
+    return null;
+  }
+}
+
+async function getPushSubscription() {
+  const registration = await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
+}
+
+async function subscribeToPush() {
+  try {
+    console.log("[Push] Starting subscription process...");
+    
+    const registration = await navigator.serviceWorker.ready;
+    console.log("[Push] Service Worker ready:", registration);
+    
+    // Convert VAPID key to Uint8Array
+    const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+    console.log("[Push] VAPID key converted, length:", applicationServerKey.length);
+    
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey
+    });
+    
+    console.log("[Push] Subscribed:", subscription);
+    console.log("[Push] Subscription endpoint:", subscription.endpoint);
+    
+    // Save subscription locally
+    localStorage.setItem(PUSH_SUBSCRIPTION_KEY, JSON.stringify(subscription));
+    console.log("[Push] Saved to localStorage");
+    
+    // Send subscription to server
+    await sendSubscriptionToServer(subscription);
+    
+    return subscription;
+  } catch (error) {
+    console.error("[Push] Subscription failed:", error);
+    console.error("[Push] Error name:", error.name);
+    console.error("[Push] Error message:", error.message);
+    return null;
+  }
+}
+
+async function unsubscribeFromPush() {
+  try {
+    const subscription = await getPushSubscription();
+    if (subscription) {
+      await subscription.unsubscribe();
+      console.log("[Push] Unsubscribed");
+      
+      // Remove from server
+      await removeSubscriptionFromServer();
+      
+      // Remove local storage
+      localStorage.removeItem(PUSH_SUBSCRIPTION_KEY);
+    }
+    return true;
+  } catch (error) {
+    console.error("[Push] Unsubscribe failed:", error);
+    return false;
+  }
+}
+
+async function sendSubscriptionToServer(subscription) {
+  console.log("[Push] Sending subscription to server...");
+  console.log("[Push] Profile pubkey:", state.profile?.pubkey);
+  
+  if (!state.profile?.pubkey) {
+    console.warn("[Push] No pubkey, cannot send subscription");
+    return;
+  }
+  
+  try {
+    const payload = {
+      pubkey: state.profile.pubkey,
+      subscription: subscription.toJSON()
+    };
+    console.log("[Push] Request payload:", JSON.stringify(payload).slice(0, 200) + "...");
+    
+    const response = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    
+    console.log("[Push] Server response status:", response.status);
+    
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("[Push] Server error response:", text);
+      throw new Error(`Server responded ${response.status}: ${text}`);
+    }
+    
+    const result = await response.json();
+    console.log("[Push] Server response:", result);
+    console.log("[Push] Subscription sent to server successfully!");
+  } catch (error) {
+    console.error("[Push] Failed to send subscription to server:", error);
+  }
+}
+
+async function removeSubscriptionFromServer() {
+  if (!state.profile?.pubkey) return;
+  
+  try {
+    await fetch("/api/push/unsubscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pubkey: state.profile.pubkey
+      })
+    });
+    console.log("[Push] Subscription removed from server");
+  } catch (error) {
+    console.error("[Push] Failed to remove subscription:", error);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+function showPushModal() {
+  if (!pushUI.modal) return;
+  pushUI.modal.hidden = false;
+  requestAnimationFrame(() => {
+    pushUI.modal.classList.add("is-visible");
+  });
+}
+
+function hidePushModal() {
+  if (!pushUI.modal) return;
+  pushUI.modal.classList.remove("is-visible");
+  setTimeout(() => {
+    pushUI.modal.hidden = true;
+  }, 250);
+}
+
+async function handlePushEnable() {
+  hidePushModal();
+  localStorage.setItem(PUSH_ASKED_KEY, "true");
+  
+  // Request notification permission
+  const permission = await Notification.requestPermission();
+  
+  if (permission === "granted") {
+    const subscription = await subscribeToPush();
+    if (subscription) {
+      showToast("Notifications enabled!");
+      syncPushToggle();
+    } else {
+      showToast("Failed to enable notifications");
+    }
+  } else if (permission === "denied") {
+    showToast("Notifications blocked. Enable in browser settings.");
+  }
+  
+  syncPushToggle();
+}
+
+function handlePushLater() {
+  hidePushModal();
+  localStorage.setItem(PUSH_ASKED_KEY, "true");
+}
+
+async function handlePushToggle(event) {
+  const enabled = event.target.checked;
+  
+  if (enabled) {
+    // Request permission if not granted
+    if (Notification.permission === "default") {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        event.target.checked = false;
+        if (permission === "denied") {
+          showToast("Notifications blocked. Enable in browser settings.");
+        }
+        return;
+      }
+    } else if (Notification.permission === "denied") {
+      event.target.checked = false;
+      showToast("Notifications blocked. Enable in browser settings.");
+      return;
+    }
+    
+    const subscription = await subscribeToPush();
+    if (subscription) {
+      showToast("Notifications enabled");
+    } else {
+      event.target.checked = false;
+      showToast("Failed to enable notifications");
+    }
+  } else {
+    await unsubscribeFromPush();
+    showToast("Notifications disabled");
+  }
+}
+
+async function syncPushToggle() {
+  if (!pushUI.toggle || !isPushSupported()) {
+    // Hide option if not supported
+    const option = document.querySelector("[data-role=\"push-notifications-option\"]");
+    if (option && !isPushSupported()) {
+      option.style.display = "none";
+    }
+    return;
+  }
+  
+  const subscription = await getPushSubscription();
+  pushUI.toggle.checked = !!subscription && Notification.permission === "granted";
+}
+
+async function checkPushPrompt() {
+  if (!isPushSupported()) return;
+  
+  // Don't show if already asked
+  if (localStorage.getItem(PUSH_ASKED_KEY)) return;
+  
+  // Don't show if already subscribed
+  const subscription = await getPushSubscription();
+  if (subscription) return;
+  
+  // Don't show if permission already denied
+  if (Notification.permission === "denied") return;
+  
+  // Show modal after a short delay
+  setTimeout(showPushModal, 2000);
+}
+
 function updateSettings(partial) {
   state.settings = {
     ...state.settings,
@@ -682,10 +966,22 @@ async function openScannerChat() {
   
   // Enable composer
   toggleComposer(true);
-  ui.messageInput?.focus();
+  // Don't auto-focus on mobile to prevent keyboard popup
+  if (window.innerWidth > 720) {
+    ui.messageInput?.focus();
+  }
+  
+  // Show chat on mobile
+  showMobileChat();
 }
 
 function updateChatHeader(opts = {}) {
+  // Hide/show mobile info button based on whether it's Scanner
+  const mobileInfoBtn = document.querySelector(".mobile-info-btn");
+  if (mobileInfoBtn) {
+    mobileInfoBtn.style.display = opts.isScanner ? "none" : "";
+  }
+  
   if (opts.isScanner) {
     if (ui.chatAvatar) {
       ui.chatAvatar.textContent = "🔍";
@@ -1560,6 +1856,207 @@ function bindEvents() {
 
   ui.messageTimeline?.addEventListener("contextmenu", handleTimelineContextMenu);
   ui.messageTimeline?.addEventListener("scroll", hideMessageContextMenu);
+
+  // Mobile swipe gestures for reply/delete
+  let swipeState = {
+    active: false,
+    bubble: null,
+    messageId: null,
+    isOutgoing: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    indicator: null,
+  };
+  
+  const SWIPE_THRESHOLD = 80; // pixels to trigger action
+  const SWIPE_MAX = 120; // max swipe distance
+  
+  function createSwipeIndicator(type) {
+    const indicator = document.createElement("div");
+    indicator.className = `swipe-indicator swipe-indicator--${type}`;
+    indicator.innerHTML = type === "reply" 
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10h10a5 5 0 0 1 5 5v6"/><path d="M3 10l6 6"/><path d="M3 10l6-6"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+    return indicator;
+  }
+  
+  function updateSwipeVisual(deltaX) {
+    if (!swipeState.bubble) return;
+    
+    const { isOutgoing } = swipeState;
+    // For outgoing: swipe left (negative) = reply, swipe right (positive) = delete
+    // For incoming: swipe right (positive) = reply, swipe left (negative) = delete
+    
+    const isReplyDirection = isOutgoing ? deltaX < 0 : deltaX > 0;
+    const isDeleteDirection = isOutgoing ? deltaX > 0 : deltaX < 0;
+    const absDelta = Math.abs(deltaX);
+    
+    // Clamp the movement
+    const clampedDelta = Math.min(absDelta, SWIPE_MAX) * Math.sign(deltaX);
+    swipeState.bubble.style.transform = `translateX(${clampedDelta}px)`;
+    
+    // Show/update indicator
+    if (absDelta > 20) {
+      const type = isReplyDirection ? "reply" : "delete";
+      if (!swipeState.indicator || swipeState.indicator.dataset.type !== type) {
+        swipeState.indicator?.remove();
+        swipeState.indicator = createSwipeIndicator(type);
+        swipeState.indicator.dataset.type = type;
+        swipeState.bubble.parentElement?.appendChild(swipeState.indicator);
+      }
+      
+      // Position indicator
+      const progress = Math.min(absDelta / SWIPE_THRESHOLD, 1);
+      swipeState.indicator.style.opacity = progress;
+      swipeState.indicator.classList.toggle("is-ready", absDelta >= SWIPE_THRESHOLD);
+      
+      if (isOutgoing) {
+        swipeState.indicator.style.right = isReplyDirection ? "auto" : "0";
+        swipeState.indicator.style.left = isReplyDirection ? "0" : "auto";
+      } else {
+        swipeState.indicator.style.left = isReplyDirection ? "auto" : "0";
+        swipeState.indicator.style.right = isReplyDirection ? "0" : "auto";
+      }
+    }
+  }
+  
+  function resetSwipe(triggerAction = false) {
+    if (!swipeState.bubble) return;
+    
+    const deltaX = swipeState.currentX - swipeState.startX;
+    const absDelta = Math.abs(deltaX);
+    const { isOutgoing, messageId } = swipeState;
+    const isReplyDirection = isOutgoing ? deltaX < 0 : deltaX > 0;
+    
+    // Check if action should be triggered
+    if (triggerAction && absDelta >= SWIPE_THRESHOLD && messageId) {
+      if (navigator.vibrate) navigator.vibrate(30);
+      
+      if (isReplyDirection) {
+        // Reply
+        startReplyToMessage(messageId);
+      } else {
+        // Delete
+        handleDeleteMessage(messageId);
+      }
+    }
+    
+    // Animate back
+    swipeState.bubble.style.transition = "transform 0.2s ease";
+    swipeState.bubble.style.transform = "";
+    setTimeout(() => {
+      if (swipeState.bubble) {
+        swipeState.bubble.style.transition = "";
+      }
+    }, 200);
+    
+    // Remove indicator
+    swipeState.indicator?.remove();
+    
+    // Reset state
+    swipeState = {
+      active: false,
+      bubble: null,
+      messageId: null,
+      isOutgoing: false,
+      startX: 0,
+      startY: 0,
+      currentX: 0,
+      indicator: null,
+    };
+  }
+  
+  // Long press for context menu + swipe detection
+  let longPressTimer = null;
+  let longPressTriggered = false;
+  
+  ui.messageTimeline?.addEventListener("touchstart", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const bubble = target.closest(".bubble");
+    if (!bubble || !bubble.dataset.messageId) return;
+    
+    const touch = event.touches[0];
+    swipeState.startX = touch.clientX;
+    swipeState.startY = touch.clientY;
+    swipeState.bubble = bubble;
+    swipeState.messageId = bubble.dataset.messageId;
+    swipeState.isOutgoing = bubble.classList.contains("bubble--out");
+    
+    longPressTriggered = false;
+    
+    // Prevent text selection
+    document.body.style.userSelect = "none";
+    document.body.style.webkitUserSelect = "none";
+    
+    // Long press timer for context menu
+    longPressTimer = setTimeout(() => {
+      if (swipeState.bubble && !swipeState.active) {
+        longPressTriggered = true;
+        const direction = swipeState.isOutgoing ? "out" : "in";
+        showMessageContextMenu(touch.clientX, touch.clientY, swipeState.messageId, direction);
+        if (navigator.vibrate) navigator.vibrate(50);
+        window.getSelection()?.removeAllRanges();
+        resetSwipe(false);
+      }
+    }, 500);
+  }, { passive: true });
+  
+  ui.messageTimeline?.addEventListener("touchmove", (event) => {
+    if (!swipeState.bubble || longPressTriggered) return;
+    
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - swipeState.startX;
+    const deltaY = touch.clientY - swipeState.startY;
+    
+    // If vertical scroll is dominant, cancel swipe
+    if (!swipeState.active && Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 10) {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      resetSwipe(false);
+      return;
+    }
+    
+    // Start swipe if horizontal movement is significant
+    if (!swipeState.active && Math.abs(deltaX) > 10) {
+      swipeState.active = true;
+      // Cancel long press
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    }
+    
+    if (swipeState.active) {
+      swipeState.currentX = touch.clientX;
+      updateSwipeVisual(deltaX);
+    }
+  }, { passive: true });
+  
+  ui.messageTimeline?.addEventListener("touchend", (event) => {
+    document.body.style.userSelect = "";
+    document.body.style.webkitUserSelect = "";
+    
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    
+    if (longPressTriggered) {
+      event.preventDefault();
+      longPressTriggered = false;
+      return;
+    }
+    
+    if (swipeState.active) {
+      resetSwipe(true);
+    } else {
+      resetSwipe(false);
+    }
+  });
 
   ui.replyCancel?.addEventListener("click", (event) => {
     event.preventDefault();
@@ -6506,6 +7003,9 @@ async function handleAppStateChange(appState) {
       showInstallPromotion();
       // Check if backup reminder is needed
       checkBackupReminder();
+      // Sync push toggle and check if we should show the prompt
+      syncPushToggle();
+      checkPushPrompt();
     }
     // Always ensure encryption key is synced on auth
     await syncEncryptionKey();
@@ -6603,9 +7103,13 @@ async function initialize() {
   initMobileNavigation();
   initMobileInfoSheet();
   initSmartScrollbar();
+  initPushUI();
   handleMessageInput();
   toggleComposer(false);
   registerDebugHelpers();
+
+  // Register Service Worker for push notifications
+  registerServiceWorker();
 
   await ensureEncryptionKeys();
   await loadWorkspace(null);
