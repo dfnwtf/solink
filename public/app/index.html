@@ -56,7 +56,7 @@
       .onboarding { display: none; }
     </style>
     
-    <link rel="stylesheet" href="/css/style.css?v=20241201c9" />
+    <link rel="stylesheet" href="/css/style.css?v=20241201d8" />
     <script type="importmap">
       {
         "imports": {
@@ -255,6 +255,16 @@
                 <button type="button" class="ghost-button" data-action="export-data">Export</button>
                 <button type="button" class="ghost-button" data-action="import-data">Import</button>
               </div>
+            </div>
+            <div class="settings-option" data-role="push-notifications-option">
+              <div class="settings-option__meta">
+                <div class="settings-option__title">Push notifications</div>
+                <p class="settings-option__description">Get notified when you receive new messages.</p>
+              </div>
+              <label class="settings-toggle">
+                <input type="checkbox" data-role="push-toggle" />
+                <span class="settings-toggle__track"></span>
+              </label>
             </div>
             <div class="settings-option" data-role="install-app-option" hidden>
               <div class="settings-option__meta">
@@ -562,6 +572,25 @@
       </div>
     </div>
 
+    <!-- Push Notifications Permission Modal -->
+    <div class="push-modal" data-role="push-modal" hidden>
+      <div class="push-modal__backdrop"></div>
+      <div class="push-modal__panel">
+        <div class="push-modal__icon">🔔</div>
+        <h2 class="push-modal__title">Enable notifications?</h2>
+        <p class="push-modal__description">
+          Get notified when you receive new messages, even when SOLink is closed.
+        </p>
+        <p class="push-modal__note">
+          You can change this anytime in Settings.
+        </p>
+        <div class="push-modal__actions">
+          <button type="button" class="ghost-button" data-action="push-later">Maybe later</button>
+          <button type="button" class="primary-button" data-action="push-enable">Enable</button>
+        </div>
+      </div>
+    </div>
+
     <div class="forward-modal" data-role="forward-modal" hidden>
       <div class="forward-modal__panel">
         <header class="forward-modal__header">
@@ -609,9 +638,11 @@
 
     <audio data-role="notification-sound" preload="auto" src="/media/inbox.mp3" type="audio/mpeg"></audio>
 
-    <script type="module" src="/js/chat.js?v=20241201d2"></script>
+    <script type="module" src="/js/chat.js?v=20241201d10"></script>
   </body>
 </html>
+
+
 
 
 
