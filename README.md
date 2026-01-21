@@ -98,6 +98,8 @@ SOLink/
 │   │   ├── api.js     # API client
 │   │   ├── db.js      # IndexedDB operations
 │   │   └── main.js    # Auth & wallet connection
+│   ├── icons/         # App icons for notifications
+│   ├── sw.js          # Service Worker
 │   └── index.html     # Landing page
 └── worker/
     ├── worker.js      # Cloudflare Worker
@@ -163,7 +165,8 @@ const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
 - [x] SEO & sitemap
 - [x] Token Scanner (DFN Patrol integration)
 - [x] Message reactions
-- [ ] Push notifications
+- [x] Push notifications
+- [x] Mobile swipe gestures (reply/delete)
 - [ ] Group chats
 - [ ] Voice calls
 - [ ] File sharing
