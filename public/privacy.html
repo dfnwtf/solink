@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    
+    <title>Privacy Policy — SOLink</title>
+    <meta name="description" content="Privacy Policy for SOLink - Secure Web3 Messenger on Solana" />
+    <meta name="robots" content="index, follow" />
+    
+    <link rel="canonical" href="https://solink.chat/privacy" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    
+    <meta name="theme-color" content="#0a090e" />
+    
+    <link rel="stylesheet" href="./css/style.css?v=20241201" />
+    <style>
+      .legal-page {
+        min-height: 100vh;
+        background: var(--bg-primary);
+        padding: 2rem 1rem 4rem;
+      }
+      .legal-container {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      .legal-header {
+        text-align: center;
+        margin-bottom: 3rem;
+        padding-bottom: 2rem;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .legal-logo {
+        font-family: var(--font-display);
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-decoration: none;
+        letter-spacing: 0.1em;
+      }
+      .legal-logo:hover {
+        color: var(--accent-gold);
+      }
+      .legal-title {
+        font-family: var(--font-display);
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin: 1.5rem 0 0.5rem;
+      }
+      .legal-updated {
+        color: var(--text-muted);
+        font-size: 0.875rem;
+      }
+      .legal-content h2 {
+        font-family: var(--font-display);
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 2.5rem 0 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .legal-content h2:first-child {
+        margin-top: 0;
+      }
+      .legal-content p {
+        color: var(--text-secondary);
+        line-height: 1.7;
+        margin-bottom: 1rem;
+      }
+      .legal-content ul {
+        color: var(--text-secondary);
+        line-height: 1.7;
+        margin: 1rem 0;
+        padding-left: 1.5rem;
+      }
+      .legal-content li {
+        margin-bottom: 0.5rem;
+      }
+      .legal-content strong {
+        color: var(--text-primary);
+      }
+      .legal-content a {
+        color: var(--accent-gold);
+        text-decoration: none;
+      }
+      .legal-content a:hover {
+        text-decoration: underline;
+      }
+      .legal-content .highlight-box {
+        background: rgba(212, 175, 55, 0.1);
+        border: 1px solid rgba(212, 175, 55, 0.3);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        margin: 1.5rem 0;
+      }
+      .legal-content .highlight-box p {
+        margin: 0;
+        color: var(--text-primary);
+      }
+      .legal-footer {
+        margin-top: 4rem;
+        padding-top: 2rem;
+        border-top: 1px solid var(--border-subtle);
+        text-align: center;
+      }
+      .legal-footer__links {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+      }
+      .legal-footer__links a {
+        color: var(--text-muted);
+        text-decoration: none;
+        font-size: 0.875rem;
+      }
+      .legal-footer__links a:hover {
+        color: var(--accent-gold);
+      }
+      .legal-footer__copy {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+      }
+      @media (max-width: 640px) {
+        .legal-title {
+          font-size: 1.75rem;
+        }
+        .legal-content h2 {
+          font-size: 1.1rem;
+        }
+      }
+    </style>
+  </head>
+  <body class="landing">
+    <div class="legal-page">
+      <div class="legal-container">
+        <header class="legal-header">
+          <a href="/" class="legal-logo">SOLINK</a>
+          <h1 class="legal-title">Privacy Policy</h1>
+          <p class="legal-updated">Last updated: December 1, 2025</p>
+        </header>
+
+        <div class="legal-content">
+          <div class="highlight-box">
+            <p><strong>🔒 Privacy First:</strong> SOLink uses end-to-end encryption. We cannot read your messages — only you and your recipient can.</p>
+          </div>
+
+          <h2>1. Our Commitment to Privacy</h2>
+          <p>
+            SOLink is built with privacy at its core. We believe your communications should remain 
+            private, and we've designed our system to ensure that even we cannot access the content 
+            of your messages.
+          </p>
+
+          <h2>2. Information We Collect</h2>
+          
+          <p><strong>2.1 Wallet Information (Public)</strong></p>
+          <ul>
+            <li>Your public wallet address (used as your identity)</li>
+            <li>Optional: Your chosen nickname (@username)</li>
+          </ul>
+
+          <p><strong>2.2 Encrypted Messages</strong></p>
+          <ul>
+            <li>Messages are encrypted client-side using NaCl (XSalsa20-Poly1305) before transmission</li>
+            <li>We store only encrypted ciphertext — we cannot decrypt or read your messages</li>
+            <li>Message metadata: sender address, recipient address, timestamp</li>
+          </ul>
+
+          <p><strong>2.3 Push Notification Data</strong></p>
+          <ul>
+            <li>If enabled: Your browser's push subscription endpoint</li>
+            <li>This is required to deliver notifications when you receive new messages</li>
+            <li>You can disable push notifications at any time in Settings</li>
+          </ul>
+
+          <p><strong>2.4 Automatically Collected</strong></p>
+          <ul>
+            <li>IP address (processed by Cloudflare for security and delivery)</li>
+            <li>Browser type and version (for compatibility)</li>
+            <li>We do not use tracking cookies or analytics that identify you</li>
+          </ul>
+
+          <h2>3. Information We Do NOT Collect</h2>
+          <ul>
+            <li>Private keys or seed phrases — these never leave your device</li>
+            <li>Plaintext message content — we only see encrypted data</li>
+            <li>Personal information (name, email, phone number)</li>
+            <li>Location data beyond IP-based country (for compliance)</li>
+          </ul>
+
+          <h2>4. How We Use Your Information</h2>
+          <ul>
+            <li><strong>Message Delivery:</strong> Route encrypted messages between wallets</li>
+            <li><strong>Notifications:</strong> Send push notifications for new messages (if enabled)</li>
+            <li><strong>Service Operation:</strong> Maintain and improve the Service</li>
+            <li><strong>Security:</strong> Detect and prevent abuse, spam, and fraud</li>
+          </ul>
+
+          <h2>5. Data Storage and Security</h2>
+          <p>
+            Your data is stored on Cloudflare's global edge network, which provides:
+          </p>
+          <ul>
+            <li>Enterprise-grade security and DDoS protection</li>
+            <li>Data encryption at rest and in transit</li>
+            <li>SOC 2 Type II, ISO 27001, and other security certifications</li>
+          </ul>
+          <p>
+            Encrypted messages are stored temporarily for delivery. Once delivered, messages 
+            are removed from our servers. Your local message history is stored only on your device.
+          </p>
+
+          <h2>6. Data Sharing</h2>
+          <p><strong>We do not sell, rent, or share your personal data with third parties.</strong></p>
+          <p>We may share data only in the following circumstances:</p>
+          <ul>
+            <li><strong>Service Providers:</strong> Cloudflare for infrastructure (subject to their privacy policy)</li>
+            <li><strong>Legal Requirements:</strong> When required by law or valid legal process</li>
+            <li><strong>Safety:</strong> To protect the rights, property, or safety of users or the public</li>
+          </ul>
+
+          <h2>7. Third-Party Services</h2>
+          <p>SOLink integrates with third-party services that have their own privacy policies:</p>
+          <ul>
+            <li><strong>Wallet Providers</strong> (Phantom, Solflare, etc.) — for authentication</li>
+            <li><strong>DFN Patrol</strong> — for token security scanning (no personal data shared)</li>
+            <li><strong>Cloudflare</strong> — for infrastructure and delivery</li>
+          </ul>
+
+          <h2>8. Your Rights and Choices</h2>
+          <p>You have control over your data:</p>
+          <ul>
+            <li><strong>Access:</strong> Your messages are stored locally on your device</li>
+            <li><strong>Export:</strong> Use the Backup feature to export your data (AES-256 encrypted)</li>
+            <li><strong>Delete:</strong> Clear chat history at any time; disconnect wallet to remove association</li>
+            <li><strong>Notifications:</strong> Enable/disable push notifications in Settings</li>
+          </ul>
+
+          <h2>9. Data Retention</h2>
+          <ul>
+            <li><strong>Undelivered Messages:</strong> Stored until delivered, then removed</li>
+            <li><strong>Push Subscriptions:</strong> Retained while active; removed when disabled</li>
+            <li><strong>Nicknames:</strong> Retained until you change or remove them</li>
+          </ul>
+
+          <h2>10. Children's Privacy</h2>
+          <p>
+            SOLink is not intended for users under 18 years of age. We do not knowingly collect 
+            information from children under 18. If you believe a child has provided us with data, 
+            please contact us immediately.
+          </p>
+
+          <h2>11. International Users</h2>
+          <p>
+            SOLink is operated globally through Cloudflare's network. By using the Service, 
+            you consent to the transfer and processing of your data in various locations worldwide.
+          </p>
+
+          <h2>12. Changes to This Policy</h2>
+          <p>
+            We may update this Privacy Policy from time to time. Changes will be posted on this page 
+            with an updated "Last updated" date. Continued use of the Service after changes 
+            constitutes acceptance of the updated policy.
+          </p>
+
+          <h2>13. Contact Us</h2>
+          <p>
+            For privacy-related questions or concerns, please reach out through our 
+            <a href="https://x.com/imandrei_fyi" target="_blank" rel="noreferrer">Twitter/X</a> or 
+            <a href="https://github.com/dfnwtf/solink" target="_blank" rel="noreferrer">GitHub</a>.
+          </p>
+        </div>
+
+        <footer class="legal-footer">
+          <div class="legal-footer__links">
+            <a href="/">Home</a>
+            <a href="/app">Open Messenger</a>
+            <a href="/terms">Terms of Service</a>
+            <a href="/privacy">Privacy Policy</a>
+            <a href="/disclaimer">Disclaimer</a>
+          </div>
+          <p class="legal-footer__copy">© 2025 SOLINK. Built on Solana.</p>
+        </footer>
+      </div>
+    </div>
+  </body>
+</html>
+

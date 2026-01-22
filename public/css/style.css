@@ -1552,6 +1552,22 @@ html {
   color: rgba(255, 255, 255, 0.8);
 }
 
+.ts-footer__legal {
+  display: flex;
+  gap: clamp(16px, 3vw, 32px);
+  margin-top: 1rem;
+}
+
+.ts-footer__legal a {
+  font-size: clamp(0.65rem, 0.9vw, 0.75rem);
+  color: rgba(255, 255, 255, 0.3);
+  transition: color 0.3s ease;
+}
+
+.ts-footer__legal a:hover {
+  color: var(--accent-gold);
+}
+
 .ts-footer__copy {
   margin: 0;
   font-size: clamp(0.65rem, 0.9vw, 0.72rem);
