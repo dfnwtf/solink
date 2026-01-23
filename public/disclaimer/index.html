@@ -14,149 +14,261 @@
     
     <meta name="theme-color" content="#0a090e" />
     
-    <link rel="stylesheet" href="/css/style.css?v=20241201" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
+    
     <style>
-      .legal-page {
-        min-height: 100vh;
-        background: var(--bg-primary);
-        padding: 2rem 1rem 4rem;
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
       }
+
+      :root {
+        --font-display: "Space Grotesk", system-ui, sans-serif;
+        --font-body: "Inter", system-ui, sans-serif;
+        --accent: #d4782a;
+        --accent-muted: #e8a05c;
+        --accent-red: #ef4444;
+        --bg-dark: #0a090e;
+        --bg-card: rgba(255, 255, 255, 0.03);
+        --border-subtle: rgba(255, 255, 255, 0.08);
+        --text-primary: #f5f4f8;
+        --text-secondary: rgba(245, 244, 248, 0.7);
+        --text-muted: rgba(245, 244, 248, 0.5);
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: var(--font-body);
+        background: var(--bg-dark);
+        color: var(--text-primary);
+        min-height: 100vh;
+        line-height: 1.6;
+      }
+
+      .legal-page {
+        position: relative;
+        min-height: 100vh;
+        padding: 2rem 1.5rem 4rem;
+        background:
+          radial-gradient(ellipse 80% 50% at 50% -20%, rgba(212, 120, 42, 0.08), transparent),
+          radial-gradient(ellipse 60% 40% at 100% 0%, rgba(212, 120, 42, 0.05), transparent),
+          var(--bg-dark);
+      }
+
+      .legal-page::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' seed='5'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+        pointer-events: none;
+        z-index: 0;
+      }
+
       .legal-container {
-        max-width: 800px;
+        position: relative;
+        z-index: 1;
+        max-width: 720px;
         margin: 0 auto;
       }
+
       .legal-header {
         text-align: center;
         margin-bottom: 3rem;
         padding-bottom: 2rem;
         border-bottom: 1px solid var(--border-subtle);
       }
+
       .legal-logo {
+        display: inline-block;
         font-family: var(--font-display);
-        font-size: 1.5rem;
+        font-size: 1.25rem;
         font-weight: 700;
         color: var(--text-primary);
         text-decoration: none;
-        letter-spacing: 0.1em;
+        letter-spacing: 0.15em;
+        opacity: 0.9;
+        transition: color 0.3s, opacity 0.3s;
       }
+
       .legal-logo:hover {
-        color: var(--accent-gold);
+        color: var(--accent);
+        opacity: 1;
       }
+
       .legal-title {
         font-family: var(--font-display);
-        font-size: 2.5rem;
+        font-size: clamp(2rem, 5vw, 2.75rem);
         font-weight: 700;
         color: var(--text-primary);
-        margin: 1.5rem 0 0.5rem;
+        margin: 1.5rem 0 0.75rem;
+        letter-spacing: -0.02em;
       }
+
       .legal-updated {
         color: var(--text-muted);
         font-size: 0.875rem;
+        font-weight: 400;
       }
+
       .legal-content h2 {
         font-family: var(--font-display);
-        font-size: 1.25rem;
+        font-size: 1.15rem;
         font-weight: 600;
         color: var(--text-primary);
         margin: 2.5rem 0 1rem;
         padding-bottom: 0.5rem;
         border-bottom: 1px solid var(--border-subtle);
+        letter-spacing: -0.01em;
       }
+
       .legal-content h2:first-child {
         margin-top: 0;
       }
+
       .legal-content p {
         color: var(--text-secondary);
-        line-height: 1.7;
+        line-height: 1.75;
         margin-bottom: 1rem;
+        font-size: 0.95rem;
       }
+
       .legal-content ul {
         color: var(--text-secondary);
-        line-height: 1.7;
-        margin: 1rem 0;
-        padding-left: 1.5rem;
+        line-height: 1.75;
+        margin: 1rem 0 1.25rem;
+        padding-left: 1.25rem;
+        font-size: 0.95rem;
       }
+
       .legal-content li {
         margin-bottom: 0.5rem;
+        padding-left: 0.25rem;
       }
+
+      .legal-content li::marker {
+        color: var(--accent);
+      }
+
       .legal-content strong {
         color: var(--text-primary);
+        font-weight: 500;
       }
+
       .legal-content a {
-        color: var(--accent-gold);
+        color: var(--accent);
         text-decoration: none;
+        transition: color 0.2s;
       }
+
       .legal-content a:hover {
+        color: var(--accent-muted);
         text-decoration: underline;
       }
+
+      /* Warning box */
       .warning-box {
-        background: rgba(239, 68, 68, 0.1);
-        border: 1px solid rgba(239, 68, 68, 0.4);
+        background: rgba(239, 68, 68, 0.08);
+        border: 1px solid rgba(239, 68, 68, 0.25);
         border-radius: 8px;
-        padding: 1.25rem 1.5rem;
-        margin: 1.5rem 0;
-      }
-      .warning-box__title {
-        color: #ef4444;
-        font-weight: 600;
-        font-size: 1rem;
-        margin-bottom: 0.5rem;
+        padding: 1rem 1.25rem;
+        margin: 0 0 2rem;
         display: flex;
-        align-items: center;
-        gap: 0.5rem;
+        align-items: flex-start;
+        gap: 0.75rem;
       }
-      .warning-box p {
-        color: var(--text-secondary);
+
+      .warning-box--bottom {
+        margin: 2.5rem 0 0;
+      }
+
+      .warning-box__icon {
+        font-size: 1.25rem;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+
+      .warning-box__content p {
         margin: 0;
+        color: var(--text-primary);
         font-size: 0.9rem;
       }
-      .info-box {
-        background: rgba(212, 175, 55, 0.1);
-        border: 1px solid rgba(212, 175, 55, 0.3);
-        border-radius: 8px;
-        padding: 1.25rem 1.5rem;
-        margin: 1.5rem 0;
+
+      .warning-box__content p + p {
+        margin-top: 0.5rem;
+        color: var(--text-secondary);
       }
+
+      /* Info box */
+      .info-box {
+        background: rgba(212, 120, 42, 0.08);
+        border: 1px solid rgba(212, 120, 42, 0.2);
+        border-radius: 8px;
+        padding: 0.85rem 1.25rem;
+        margin: 1.25rem 0;
+      }
+
       .info-box p {
         margin: 0;
         color: var(--text-primary);
+        font-size: 0.9rem;
       }
+
       .legal-footer {
         margin-top: 4rem;
         padding-top: 2rem;
         border-top: 1px solid var(--border-subtle);
         text-align: center;
       }
+
       .legal-footer__links {
         display: flex;
         justify-content: center;
-        gap: 2rem;
+        gap: 1.5rem;
         flex-wrap: wrap;
-        margin-bottom: 1rem;
+        margin-bottom: 1.25rem;
       }
+
       .legal-footer__links a {
         color: var(--text-muted);
         text-decoration: none;
-        font-size: 0.875rem;
+        font-size: 0.85rem;
+        transition: color 0.2s;
       }
+
       .legal-footer__links a:hover {
-        color: var(--accent-gold);
+        color: var(--accent);
       }
+
       .legal-footer__copy {
         color: var(--text-muted);
         font-size: 0.75rem;
+        opacity: 0.7;
       }
+
       @media (max-width: 640px) {
-        .legal-title {
-          font-size: 1.75rem;
+        .legal-page {
+          padding: 1.5rem 1rem 3rem;
+        }
+        .legal-header {
+          margin-bottom: 2rem;
         }
         .legal-content h2 {
-          font-size: 1.1rem;
+          font-size: 1.05rem;
+          margin-top: 2rem;
+        }
+        .legal-footer__links {
+          gap: 1rem;
         }
       }
     </style>
   </head>
-  <body class="landing">
+  <body>
     <div class="legal-page">
       <div class="legal-container">
         <header class="legal-header">
@@ -167,11 +279,11 @@
 
         <div class="legal-content">
           <div class="warning-box">
-            <div class="warning-box__title">⚠️ Important Notice</div>
-            <p>
-              The information provided by SOLink, including Token Scanner reports, is for informational 
-              purposes only and does not constitute financial, investment, or trading advice.
-            </p>
+            <span class="warning-box__icon">⚠️</span>
+            <div class="warning-box__content">
+              <p><strong>Important Notice</strong></p>
+              <p>The information provided by SOLink, including Token Scanner reports, is for informational purposes only and does not constitute financial, investment, or trading advice.</p>
+            </div>
           </div>
 
           <h2>1. Token Scanner Disclaimer</h2>
@@ -199,9 +311,7 @@
             All information, including Token Scanner reports, risk scores, and assessments, is 
             provided for general informational purposes only.
           </p>
-          <p>
-            You should:
-          </p>
+          <p>You should:</p>
           <ul>
             <li>Conduct your own research (DYOR) before making any investment decisions</li>
             <li>Consult with qualified financial advisors when appropriate</li>
@@ -210,9 +320,7 @@
           </ul>
 
           <h2>3. Risk Assessment Limitations</h2>
-          <p>
-            The risk scores and security assessments provided by the Token Scanner:
-          </p>
+          <p>The risk scores and security assessments provided by the Token Scanner:</p>
           <ul>
             <li><strong>Are algorithmic estimates</strong> based on available data at a specific point in time</li>
             <li><strong>May change</strong> as new information becomes available or token conditions change</li>
@@ -222,9 +330,7 @@
           </ul>
 
           <h2>4. Third-Party Data</h2>
-          <p>
-            Token Scanner aggregates data from multiple third-party sources including:
-          </p>
+          <p>Token Scanner aggregates data from multiple third-party sources including:</p>
           <ul>
             <li>Solana blockchain (on-chain data)</li>
             <li>DexScreener, Birdeye, and other market data providers</li>
@@ -238,9 +344,7 @@
           </p>
 
           <h2>5. Cryptocurrency Risks</h2>
-          <p>
-            Cryptocurrency and digital assets involve significant risks including but not limited to:
-          </p>
+          <p>Cryptocurrency and digital assets involve significant risks including but not limited to:</p>
           <ul>
             <li><strong>Market Volatility:</strong> Prices can fluctuate dramatically in short periods</li>
             <li><strong>Total Loss:</strong> You may lose your entire investment</li>
@@ -264,9 +368,7 @@
           </ul>
 
           <h2>7. Limitation of Liability</h2>
-          <p>
-            <strong>TO THE MAXIMUM EXTENT PERMITTED BY LAW:</strong>
-          </p>
+          <p><strong>TO THE MAXIMUM EXTENT PERMITTED BY LAW:</strong></p>
           <ul>
             <li>SOLink shall not be liable for any losses, damages, or claims arising from your use 
             of the Token Scanner or reliance on any information provided</li>
@@ -276,9 +378,7 @@
           </ul>
 
           <h2>8. Your Responsibility</h2>
-          <p>
-            By using SOLink and the Token Scanner, you acknowledge and agree that:
-          </p>
+          <p>By using SOLink and the Token Scanner, you acknowledge and agree that:</p>
           <ul>
             <li>You are solely responsible for your investment and trading decisions</li>
             <li>You will conduct your own independent research and due diligence</li>
@@ -316,22 +416,21 @@
             <a href="https://github.com/dfnwtf/solink" target="_blank" rel="noreferrer">GitHub</a>.
           </p>
 
-          <div class="warning-box" style="margin-top: 3rem;">
-            <div class="warning-box__title">⚠️ Final Reminder</div>
-            <p>
-              <strong>Never invest based solely on a Token Scanner report.</strong> Always do your own 
-              research, verify information from multiple sources, and consult professionals when needed. 
-              Cryptocurrency investments can result in complete loss of funds.
-            </p>
+          <div class="warning-box warning-box--bottom">
+            <span class="warning-box__icon">⚠️</span>
+            <div class="warning-box__content">
+              <p><strong>Never invest based solely on a Token Scanner report.</strong></p>
+              <p>Always do your own research, verify information from multiple sources, and consult professionals when needed. Cryptocurrency investments can result in complete loss of funds.</p>
+            </div>
           </div>
         </div>
 
         <footer class="legal-footer">
           <div class="legal-footer__links">
             <a href="/">Home</a>
-            <a href="/app">Open Messenger</a>
-            <a href="/terms">Terms of Service</a>
-            <a href="/privacy">Privacy Policy</a>
+            <a href="/app">Messenger</a>
+            <a href="/terms">Terms</a>
+            <a href="/privacy">Privacy</a>
             <a href="/disclaimer">Disclaimer</a>
           </div>
           <p class="legal-footer__copy">© 2025 SOLINK. Built on Solana.</p>
@@ -340,4 +439,3 @@
     </div>
   </body>
 </html>
-
