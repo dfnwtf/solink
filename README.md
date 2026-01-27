@@ -167,6 +167,7 @@ const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
 - [x] Message reactions
 - [x] Push notifications
 - [x] Mobile swipe gestures (reply/delete)
+- [ ] Multi-wallet support (Solflare, Backpack)
 - [ ] Group chats
 - [ ] Voice calls
 - [ ] File sharing
