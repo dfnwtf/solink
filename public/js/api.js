@@ -347,3 +347,59 @@ export async function fetchLinkPreviewApi(url) {
     timeoutMs: 8000, // 8 second timeout
   });
 }
+
+// ============================================
+// R2 CLOUD SYNC - Message history sync
+// ============================================
+
+/**
+ * Sync encrypted chat history to cloud (R2)
+ * @param {string} contactKey - Contact's public key
+ * @param {string} encryptedData - Base64 encrypted chat data
+ */
+export async function syncChatToCloud(contactKey, encryptedData) {
+  if (!contactKey || !encryptedData) {
+    throw new Error('Missing contactKey or encrypted data');
+  }
+  return request(`/sync/chat/${encodeURIComponent(contactKey)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ encrypted: encryptedData }),
+  });
+}
+
+/**
+ * Load encrypted chat history from cloud (R2)
+ * @param {string} contactKey - Contact's public key
+ * @returns {Promise<{found: boolean, encrypted?: string, updatedAt?: number}>}
+ */
+export async function loadChatFromCloud(contactKey) {
+  if (!contactKey) {
+    throw new Error('Missing contactKey');
+  }
+  return request(`/sync/chat/${encodeURIComponent(contactKey)}`, {
+    method: 'GET',
+  });
+}
+
+/**
+ * Delete chat history from cloud (R2)
+ * @param {string} contactKey - Contact's public key
+ */
+export async function deleteChatFromCloud(contactKey) {
+  if (!contactKey) {
+    throw new Error('Missing contactKey');
+  }
+  return request(`/sync/chat/${encodeURIComponent(contactKey)}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Get list of all synced chats from cloud (R2)
+ * @returns {Promise<{chats: Array<{contactKey: string, updatedAt: number, size: number}>}>}
+ */
+export async function loadChatListFromCloud() {
+  return request('/sync/chats', {
+    method: 'GET',
+  });
+}
