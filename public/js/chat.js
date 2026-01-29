@@ -500,10 +500,13 @@ async function encryptChatHistoryForCloud(contactKey, messages) {
   if (!messages || !messages.length) return null;
   
   try {
-    // Get encryption keys
-    const keys = await getEncryptionKeys();
+    // Get encryption keys - use state first, fallback to DB
+    let keys = state.encryptionKeys;
     if (!keys?.secretKey) {
-      console.warn("[CloudSync] No encryption keys available");
+      keys = await getEncryptionKeys();
+    }
+    if (!keys?.secretKey) {
+      // Silently return - keys not yet available
       return null;
     }
     
@@ -550,9 +553,13 @@ async function decryptChatHistoryFromCloud(encryptedBase64) {
   if (!encryptedBase64) return null;
   
   try {
-    const keys = await getEncryptionKeys();
+    // Get encryption keys - use state first, fallback to DB
+    let keys = state.encryptionKeys;
     if (!keys?.secretKey) {
-      console.warn("[CloudSync] No encryption keys for decryption");
+      keys = await getEncryptionKeys();
+    }
+    if (!keys?.secretKey) {
+      // Silently return - keys not yet available
       return null;
     }
     
@@ -589,6 +596,7 @@ async function decryptChatHistoryFromCloud(encryptedBase64) {
 function scheduleChatSync(contactKey) {
   if (!CLOUD_SYNC_ENABLED || !contactKey || contactKey === SCANNER_CONTACT_KEY) return;
   if (!getSessionToken()) return; // Not authenticated
+  if (!state.encryptionKeys?.secretKey) return; // Keys not yet loaded
   
   // Clear existing timer
   if (cloudSyncTimers.has(contactKey)) {
@@ -629,6 +637,7 @@ async function performChatSync(contactKey) {
 async function restoreChatFromCloudIfNeeded(contactKey) {
   if (!CLOUD_SYNC_ENABLED || !contactKey || contactKey === SCANNER_CONTACT_KEY) return false;
   if (!getSessionToken()) return false;
+  if (!state.encryptionKeys?.secretKey) return false; // Keys not yet loaded
   
   try {
     // Check if local has messages
@@ -672,6 +681,7 @@ async function restoreChatFromCloudIfNeeded(contactKey) {
 async function restoreAllChatsFromCloud() {
   if (!CLOUD_SYNC_ENABLED) return;
   if (!getSessionToken()) return;
+  if (!state.encryptionKeys?.secretKey) return; // Keys not yet loaded
   
   try {
     console.log("[CloudSync] Checking for cloud backup...");
