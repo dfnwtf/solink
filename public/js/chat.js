@@ -523,15 +523,19 @@ async function encryptChatHistoryForCloud(contactKey, messages) {
     const plaintext = JSON.stringify({ contactKey, messages: data, syncedAt: Date.now() });
     const plaintextBytes = new TextEncoder().encode(plaintext);
     
-    // Encrypt with NaCl secretbox (same key as messages)
+    // Encrypt with NaCl secretbox
     const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-    const secretKeyBytes = typeof keys.secretKey === 'string' 
-      ? decodeBase58(keys.secretKey) 
-      : keys.secretKey;
     
-    // Use first 32 bytes of secret key for secretbox
-    const encryptionKey = secretKeyBytes.slice(0, 32);
-    const encrypted = nacl.secretbox(plaintextBytes, nonce, encryptionKey);
+    // Secret key is stored as base64
+    let secretKeyBytes;
+    if (typeof keys.secretKey === 'string') {
+      secretKeyBytes = Uint8Array.from(atob(keys.secretKey), c => c.charCodeAt(0));
+    } else {
+      secretKeyBytes = keys.secretKey;
+    }
+    
+    // NaCl box secretKey is 32 bytes, use it directly
+    const encrypted = nacl.secretbox(plaintextBytes, nonce, secretKeyBytes);
     
     // Combine nonce + encrypted data
     const combined = new Uint8Array(nonce.length + encrypted.length);
@@ -570,13 +574,16 @@ async function decryptChatHistoryFromCloud(encryptedBase64) {
     const nonce = combined.slice(0, nacl.secretbox.nonceLength);
     const encrypted = combined.slice(nacl.secretbox.nonceLength);
     
-    // Decrypt
-    const secretKeyBytes = typeof keys.secretKey === 'string' 
-      ? decodeBase58(keys.secretKey) 
-      : keys.secretKey;
-    const encryptionKey = secretKeyBytes.slice(0, 32);
+    // Secret key is stored as base64
+    let secretKeyBytes;
+    if (typeof keys.secretKey === 'string') {
+      secretKeyBytes = Uint8Array.from(atob(keys.secretKey), c => c.charCodeAt(0));
+    } else {
+      secretKeyBytes = keys.secretKey;
+    }
     
-    const decrypted = nacl.secretbox.open(encrypted, nonce, encryptionKey);
+    // Decrypt
+    const decrypted = nacl.secretbox.open(encrypted, nonce, secretKeyBytes);
     if (!decrypted) {
       console.warn("[CloudSync] Decryption failed - wrong key?");
       return null;
