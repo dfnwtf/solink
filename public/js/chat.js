@@ -6260,20 +6260,73 @@ async function handleIncomingMessages(messages) {
   }
 }
 
+// Derive encryption keys deterministically from wallet signature
+async function deriveEncryptionKeysFromWallet() {
+  const provider = getProviderInstance();
+  if (!provider?.signMessage) {
+    console.warn("[Encryption] Wallet not available for key derivation");
+    return null;
+  }
+  
+  try {
+    console.log("[Encryption] Deriving keys from wallet signature...");
+    
+    // Fixed message for deterministic key derivation
+    const message = "SOLink Encryption Key Derivation v1";
+    const messageBytes = new TextEncoder().encode(message);
+    
+    // Sign with wallet
+    const signed = await provider.signMessage(messageBytes, 'utf8');
+    const signature = 'signature' in signed ? signed.signature : signed;
+    
+    // Hash signature to get 32-byte seed
+    const signatureBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', signatureBytes);
+    const seed = new Uint8Array(hashBuffer);
+    
+    // Derive key pair from seed (deterministic!)
+    const pair = nacl.box.keyPair.fromSecretKey(seed);
+    
+    const keys = {
+      publicKey: bytesToBase64(pair.publicKey),
+      secretKey: bytesToBase64(pair.secretKey),
+      createdAt: Date.now(),
+      derived: true
+    };
+    
+    console.log("[Encryption] Keys derived successfully from wallet");
+    return keys;
+  } catch (error) {
+    console.error("[Encryption] Key derivation failed:", error);
+    return null;
+  }
+}
+
 async function ensureEncryptionKeys() {
   if (state.encryptionKeys?.publicKey && state.encryptionKeys?.secretKey) {
     return state.encryptionKeys;
   }
+  
   let keys = await getEncryptionKeys();
+  
   if (!keys || !keys.publicKey || !keys.secretKey) {
-    const pair = nacl.box.keyPair();
-    keys = {
-      publicKey: bytesToBase64(pair.publicKey),
-      secretKey: bytesToBase64(pair.secretKey),
-      createdAt: Date.now(),
-    };
+    // Try to derive keys from wallet (deterministic - same keys on any device)
+    keys = await deriveEncryptionKeysFromWallet();
+    
+    if (!keys) {
+      // Fallback to random keys if derivation fails (mobile, etc.)
+      console.warn("[Encryption] Derivation failed, using random keys");
+      const pair = nacl.box.keyPair();
+      keys = {
+        publicKey: bytesToBase64(pair.publicKey),
+        secretKey: bytesToBase64(pair.secretKey),
+        createdAt: Date.now(),
+      };
+    }
+    
     await saveEncryptionKeys(keys);
   }
+  
   state.encryptionKeys = keys;
   return keys;
 }
@@ -6339,13 +6392,19 @@ async function resetEncryptionKeys() {
   state.sessionSecrets.clear();
   state.remoteEncryptionKeys.clear();
   
-  // Generate new key pair
-  const pair = nacl.box.keyPair();
-  const newKeys = {
-    publicKey: bytesToBase64(pair.publicKey),
-    secretKey: bytesToBase64(pair.secretKey),
-    createdAt: Date.now(),
-  };
+  // Try to derive keys from wallet first
+  let newKeys = await deriveEncryptionKeysFromWallet();
+  
+  if (!newKeys) {
+    // Fallback to random keys
+    console.warn("[Encryption] Cannot derive from wallet, using random keys");
+    const pair = nacl.box.keyPair();
+    newKeys = {
+      publicKey: bytesToBase64(pair.publicKey),
+      secretKey: bytesToBase64(pair.secretKey),
+      createdAt: Date.now(),
+    };
+  }
   
   // Save new keys
   await saveEncryptionKeys(newKeys);
