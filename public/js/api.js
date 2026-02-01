@@ -403,3 +403,42 @@ export async function loadChatListFromCloud() {
     method: 'GET',
   });
 }
+
+// ============================================
+// FULL BACKUP SYNC - Complete database backup
+// ============================================
+
+/**
+ * Save full encrypted backup to cloud (R2)
+ * @param {string} encryptedData - Base64 encrypted full backup
+ * @returns {Promise<{success: boolean, size: number}>}
+ */
+export async function saveBackupToCloud(encryptedData) {
+  if (!encryptedData) {
+    throw new Error('Missing encrypted data');
+  }
+  return request('/sync/backup', {
+    method: 'PUT',
+    body: JSON.stringify({ encrypted: encryptedData }),
+  });
+}
+
+/**
+ * Load full encrypted backup from cloud (R2)
+ * @returns {Promise<{found: boolean, encrypted?: string, updatedAt?: number, size?: number}>}
+ */
+export async function loadBackupFromCloud() {
+  return request('/sync/backup', {
+    method: 'GET',
+  });
+}
+
+/**
+ * Delete full backup from cloud (R2)
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function deleteBackupFromCloud() {
+  return request('/sync/backup', {
+    method: 'DELETE',
+  });
+}

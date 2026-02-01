@@ -413,6 +413,8 @@ export default {
         return handlePushSubscribe(request, env);
       case '/api/push/unsubscribe':
         return handlePushUnsubscribe(request, env);
+      case '/api/sync/backup':
+        return handleSyncBackup(request, env);
       case '/api/sync/chats':
         return handleSyncChatsList(request, env);
       default:
@@ -1963,6 +1965,93 @@ async function handleSyncChatsList(request, env) {
   } catch (err) {
     console.error('[Sync] List error:', err);
     return errorResponse(request, 'Failed to list chats', 500);
+  }
+}
+
+// ============================================
+// FULL BACKUP SYNC - Complete database backup
+// ============================================
+
+async function handleSyncBackup(request, env) {
+  // Authenticate
+  const token = extractBearerToken(request);
+  const walletAddress = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!walletAddress) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  // R2 key: {walletAddress}/backup.enc
+  const r2Key = `${walletAddress}/backup.enc`;
+
+  if (request.method === 'PUT') {
+    // Save full backup to R2
+    try {
+      const body = await request.json();
+      if (!body.encrypted || typeof body.encrypted !== 'string') {
+        return errorResponse(request, 'Missing encrypted data', 400);
+      }
+
+      // Validate size (max 50MB)
+      const dataSize = body.encrypted.length;
+      if (dataSize > 50 * 1024 * 1024) {
+        return errorResponse(request, 'Backup too large (max 50MB)', 400);
+      }
+
+      await env.SOLINK_STORAGE.put(r2Key, body.encrypted, {
+        customMetadata: {
+          walletAddress,
+          updatedAt: Date.now().toString(),
+          size: dataSize.toString(),
+          version: '2' // Full backup version
+        }
+      });
+
+      console.log(`[Backup] Saved full backup for ${walletAddress}, size: ${dataSize} bytes`);
+      return jsonResponse(request, { success: true, size: dataSize });
+    } catch (err) {
+      console.error('[Backup] Save error:', err);
+      return errorResponse(request, 'Failed to save backup', 500);
+    }
+
+  } else if (request.method === 'GET') {
+    // Retrieve full backup from R2
+    try {
+      const object = await env.SOLINK_STORAGE.get(r2Key);
+      
+      if (!object) {
+        console.log(`[Backup] No backup found for ${walletAddress}`);
+        return jsonResponse(request, { found: false });
+      }
+
+      const encrypted = await object.text();
+      const updatedAt = parseInt(object.customMetadata?.updatedAt) || null;
+      const size = parseInt(object.customMetadata?.size) || encrypted.length;
+
+      console.log(`[Backup] Retrieved backup for ${walletAddress}, size: ${size} bytes`);
+      return jsonResponse(request, { 
+        found: true, 
+        encrypted, 
+        updatedAt,
+        size
+      });
+    } catch (err) {
+      console.error('[Backup] Retrieve error:', err);
+      return errorResponse(request, 'Failed to retrieve backup', 500);
+    }
+
+  } else if (request.method === 'DELETE') {
+    // Delete backup from R2
+    try {
+      await env.SOLINK_STORAGE.delete(r2Key);
+      console.log(`[Backup] Deleted backup for ${walletAddress}`);
+      return jsonResponse(request, { success: true });
+    } catch (err) {
+      console.error('[Backup] Delete error:', err);
+      return errorResponse(request, 'Failed to delete backup', 500);
+    }
+
+  } else {
+    return new Response('Method Not Allowed', { status: 405 });
   }
 }
 
