@@ -5746,7 +5746,7 @@ async function handleImportFileChange(event) {
           };
           const encrypted = await encryptFullBackup(backupData);
           if (encrypted) {
-            const result = await syncBackupToCloud(encrypted);
+            const result = await saveBackupToCloud(encrypted);
             console.log("[Import] R2 sync completed:", result);
           }
         } catch (syncErr) {
