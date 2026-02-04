@@ -214,7 +214,7 @@ export async function verifySignature({ pubkey, nonce, signature }) {
   return result;
 }
 
-export async function sendMessage({ to, text, ciphertext, nonce, version, timestamp, tokenPreview, senderEncryptionKey }) {
+export async function sendMessage({ to, text, ciphertext, nonce, version, timestamp, tokenPreview, senderEncryptionKey, voiceKey, voiceDuration, voiceNonce, voiceMimeType, voiceWaveform }) {
   if (!to) {
     throw new Error('Missing recipient');
   }
@@ -234,15 +234,26 @@ export async function sendMessage({ to, text, ciphertext, nonce, version, timest
       payload.senderEncryptionKey = senderEncryptionKey;
     }
   } else {
-    if (!text) {
+    if (!text && !voiceKey) {
       throw new Error('Missing message content');
     }
-    payload.text = text;
+    payload.text = text || '';
   }
 
   // Add token preview if present
   if (tokenPreview) {
     payload.tokenPreview = tokenPreview;
+  }
+
+  // Add voice message fields if present
+  if (voiceKey) {
+    payload.voiceKey = voiceKey;
+    payload.voiceDuration = voiceDuration;
+    payload.voiceNonce = voiceNonce;
+    payload.voiceMimeType = voiceMimeType;
+    if (voiceWaveform) {
+      payload.voiceWaveform = voiceWaveform;
+    }
   }
 
   return request('/messages/send', {
@@ -440,5 +451,55 @@ export async function loadBackupFromCloud() {
 export async function deleteBackupFromCloud() {
   return request('/sync/backup', {
     method: 'DELETE',
+  });
+}
+
+// ============================================
+// VOICE MESSAGES API
+// ============================================
+
+/**
+ * Upload encrypted voice message to R2
+ * @param {string} recipientPubkey - Recipient's wallet address
+ * @param {string} messageId - Unique message ID
+ * @param {string} encryptedAudio - Base64 encrypted audio data
+ * @param {number} duration - Duration in seconds
+ * @param {string} mimeType - Audio MIME type
+ */
+export async function uploadVoiceMessage({ recipientPubkey, messageId, encryptedAudio, duration, mimeType }) {
+  if (!recipientPubkey || !messageId || !encryptedAudio) {
+    throw new Error('Missing required voice upload parameters');
+  }
+  return request('/voice/upload', {
+    method: 'POST',
+    body: JSON.stringify({ recipientPubkey, messageId, encryptedAudio, duration, mimeType }),
+  });
+}
+
+/**
+ * Download encrypted voice message from R2
+ * @param {string} voiceKey - R2 key for the voice file
+ */
+export async function downloadVoiceMessage(voiceKey) {
+  if (!voiceKey) {
+    throw new Error('Missing voice key');
+  }
+  return request(`/voice?key=${encodeURIComponent(voiceKey)}`, {
+    method: 'GET',
+    timeoutMs: 30000, // 30 sec timeout for large files
+  });
+}
+
+/**
+ * Delete voice message from R2
+ * @param {string} voiceKey - R2 key for the voice file
+ */
+export async function deleteVoiceMessage(voiceKey) {
+  if (!voiceKey) {
+    throw new Error('Missing voice key');
+  }
+  return request('/voice/delete', {
+    method: 'POST',
+    body: JSON.stringify({ voiceKey }),
   });
 }

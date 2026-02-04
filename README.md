@@ -23,6 +23,7 @@
 - **🔒 End-to-End Encryption** — Messages encrypted with NaCl (XSalsa20-Poly1305). Server never sees plaintext.
 - **☁️ Cloud Sync** — Automatic encrypted backup to cloud. Clear cache, switch devices — your data stays safe.
 - **💸 Send SOL in Chat** — Transfer SOL directly in conversations.
+- **🎤 Voice Messages** — Record and send encrypted voice messages with waveform visualization.
 - **🔍 Token Scanner** — Instant security reports for any Solana token powered by DFN Patrol.
 - **🔗 Token Link Preview** — Paste any token link and get instant security report card.
 - **🔔 Push Notifications** — Get notified when you receive new messages.
@@ -61,7 +62,7 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 ├─────────────────────────────────────────────────────────┤
 │  KV Storage     → Profiles, public keys, sessions       │
 │  Durable Objects → Message queue (encrypted)            │
-│  R2 Storage     → Encrypted cloud backups               │
+│  R2 Storage     → Encrypted backups & voice messages    │
 │  No plaintext ever touches the server                   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -101,7 +102,8 @@ SOLink/
 │   │   ├── chat.js    # Main chat logic
 │   │   ├── api.js     # API client
 │   │   ├── db.js      # IndexedDB operations
-│   │   └── main.js    # Auth & wallet connection
+│   │   ├── main.js    # Auth & wallet connection
+│   │   └── voice-recorder.js  # Voice recording & waveform
 │   ├── icons/         # App icons for notifications
 │   ├── sw.js          # Service Worker
 │   └── index.html     # Landing page
@@ -172,9 +174,9 @@ const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
 - [x] Message reactions
 - [x] Push notifications
 - [x] Mobile swipe gestures (reply/delete)
+- [x] Voice messages with waveform visualization
 - [ ] Multi-wallet support (Solflare, Backpack)
 - [ ] Group chats
-- [ ] Voice messages
 - [ ] Image sharing
 
 ---

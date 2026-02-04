@@ -13,7 +13,7 @@
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
     
     # Permissions policy - disable unnecessary features
-    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(self)"
+    Header always set Permissions-Policy "geolocation=(), microphone=(self), camera=(), payment=(self)"
 </IfModule>
 
 # Enable GZIP compression
