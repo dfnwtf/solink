@@ -38,7 +38,7 @@ export const Category = {
 const DEV_LOG_KEY = 'dev_logs';
 const MAX_DEV_LOGS = 500;
 
-export function logEvent(env, options) {
+export async function logEvent(env, options) {
   const {
     type = EventType.INFO,
     category = Category.SYSTEM,
@@ -64,9 +64,13 @@ export function logEvent(env, options) {
     }
   }
   
-  // Also store in KV for dev console (async, non-blocking)
+  // Store in KV for dev console
   if (env.SOLINK_KV) {
-    storeDevLog(env, { type, category, action, wallet: shortWallet, details, latency, status }).catch(() => {});
+    try {
+      await storeDevLog(env, { type, category, action, wallet: shortWallet, details, latency, status });
+    } catch (e) {
+      console.error('[Logger] KV write failed:', e.message);
+    }
   }
 }
 

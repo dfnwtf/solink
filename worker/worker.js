@@ -511,7 +511,7 @@ async function handleVerifyRequest(request, env) {
   
   const token = await createSession(env.SOLINK_KV, pubkey, ttlSeconds);
   
-  logEvent(env, { type: EventType.INFO, category: Category.AUTH, action: 'verify', wallet: pubkey, latency: Date.now() - startTime, status: 200 });
+  await logEvent(env, { type: EventType.INFO, category: Category.AUTH, action: 'verify', wallet: pubkey, latency: Date.now() - startTime, status: 200 });
   
   return jsonResponse(request, {
     token,
@@ -658,7 +658,7 @@ async function handleSendMessage(request, env) {
   }
   
   const msgType = voiceKey ? 'voice' : (ciphertext ? 'encrypted' : 'text');
-  logEvent(env, { type: EventType.INFO, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: msgType, status: 200, latency: Date.now() - startTime });
+  await logEvent(env, { type: EventType.INFO, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: msgType, status: 200, latency: Date.now() - startTime });
   
   return jsonResponse(request, { ok: true, messageId: message.id });
 }
@@ -2340,7 +2340,7 @@ async function handleDevLogin(request, env) {
     expirationTtl: DEV_TOKEN_TTL,
   });
 
-  logEvent(env, { type: EventType.INFO, category: Category.SYSTEM, action: 'dev_login', details: 'success', status: 200 });
+  await logEvent(env, { type: EventType.INFO, category: Category.SYSTEM, action: 'dev_login', details: 'success', status: 200 });
   
   return jsonResponse(request, { token, expiresIn: DEV_TOKEN_TTL });
 }
