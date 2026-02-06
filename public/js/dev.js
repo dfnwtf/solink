@@ -82,6 +82,7 @@
     elements.loginError = document.getElementById('login-error');
     
     elements.btnLogout = document.getElementById('btn-logout');
+    elements.btnHealth = document.getElementById('btn-health');
     elements.btnRefresh = document.getElementById('btn-refresh');
     elements.btnClearFilters = document.getElementById('btn-clear-filters');
     elements.btnPrev = document.getElementById('btn-prev');
@@ -201,6 +202,114 @@
     showLogin();
   }
   
+  async function runHealthCheck() {
+    const btn = elements.btnHealth;
+    const originalText = btn.querySelector('span').textContent;
+    
+    btn.classList.add('loading');
+    btn.querySelector('span').textContent = 'Checking...';
+    
+    try {
+      const result = await apiRequest('/health');
+      showHealthModal(result);
+      
+      // Refresh events to show new health check log
+      loadData();
+    } catch (error) {
+      showHealthModal({ ok: false, error: error.message });
+    } finally {
+      btn.classList.remove('loading');
+      btn.querySelector('span').textContent = originalText;
+    }
+  }
+  
+  function showHealthModal(result) {
+    const modal = document.getElementById('health-modal');
+    const body = document.getElementById('health-modal-body');
+    const time = document.getElementById('health-modal-time');
+    const title = modal.querySelector('.modal-title svg');
+    
+    // Update title color based on status
+    title.style.color = result.ok ? 'var(--success)' : 'var(--error)';
+    
+    // Build body content
+    let html = '';
+    
+    // Status banner
+    if (result.ok) {
+      html += `
+        <div class="health-status health-status--ok">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22,4 12,14.01 9,11.01"/>
+          </svg>
+          All Systems Operational
+        </div>
+      `;
+    } else if (result.error) {
+      html += `
+        <div class="health-status health-status--fail">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+          ${result.error}
+        </div>
+      `;
+    } else {
+      html += `
+        <div class="health-status health-status--fail">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          Some Systems Failed
+        </div>
+      `;
+    }
+    
+    // Results list
+    if (result.results) {
+      html += '<div class="health-results">';
+      
+      const icons = {
+        kv: '💾',
+        r2: '📦',
+        do: '⚡',
+        solana: '◎',
+      };
+      
+      for (const [key, val] of Object.entries(result.results)) {
+        const icon = icons[key] || '•';
+        const badgeClass = val.status === 'ok' ? 'health-item-badge--ok' : 'health-item-badge--fail';
+        
+        html += `
+          <div class="health-item">
+            <span class="health-item-name">${icon} ${key}</span>
+            <div class="health-item-status">
+              <span class="health-item-badge ${badgeClass}">${val.status}</span>
+              <span class="health-item-latency">${val.latency}ms</span>
+            </div>
+          </div>
+        `;
+      }
+      
+      html += '</div>';
+    }
+    
+    body.innerHTML = html;
+    time.textContent = result.totalLatency ? `Total: ${result.totalLatency}ms` : new Date().toLocaleTimeString();
+    
+    // Show modal
+    modal.classList.remove('hidden');
+  }
+  
+  function hideHealthModal() {
+    document.getElementById('health-modal').classList.add('hidden');
+  }
+  
   function showLoading(show) {
     elements.loadingState.classList.toggle('hidden', !show);
     if (show) {
@@ -236,6 +345,8 @@
       const statusClass = event.status >= 400 ? 'status-badge--error' : 'status-badge--success';
       const walletClass = event.wallet === '-' ? 'event-wallet--empty' : '';
       
+      const eventId = event.id || '-';
+      
       return `
         <tr>
           <td><span class="event-time">${time}</span></td>
@@ -246,11 +357,27 @@
           <td><span class="event-details" title="${escapeHtml(event.details || '')}">${event.details || '-'}</span></td>
           <td><span class="event-latency">${event.latency ? event.latency + 'ms' : '-'}</span></td>
           <td><span class="status-badge ${statusClass}">${event.status}</span></td>
+          <td><span class="event-id" data-id="${eventId}" title="Click to copy">${eventId}</span></td>
         </tr>
       `;
     }).join('');
     
     elements.eventsBody.innerHTML = html;
+    
+    // Add click handlers for copying event IDs
+    elements.eventsBody.querySelectorAll('.event-id').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.id;
+        if (id && id !== '-') {
+          navigator.clipboard.writeText(id).then(() => {
+            el.textContent = 'copied!';
+            setTimeout(() => {
+              el.textContent = id;
+            }, 1000);
+          });
+        }
+      });
+    });
   }
   
   function updatePagination() {
@@ -389,6 +516,16 @@
     
     // Logout
     elements.btnLogout.addEventListener('click', logout);
+    
+    // Health Check
+    elements.btnHealth.addEventListener('click', runHealthCheck);
+    
+    // Health Modal close handlers
+    document.getElementById('health-modal-close').addEventListener('click', hideHealthModal);
+    document.getElementById('health-modal-ok').addEventListener('click', hideHealthModal);
+    document.getElementById('health-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'health-modal') hideHealthModal();
+    });
     
     // Refresh
     elements.btnRefresh.addEventListener('click', () => {

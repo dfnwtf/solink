@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="24" fill="#0f0f10"/>
+  <rect x="16" y="16" width="160" height="160" rx="16" fill="#161618" stroke="#2a2a2e" stroke-width="2"/>
+  
+  <!-- Terminal icon -->
+  <rect x="40" y="50" width="112" height="92" rx="8" fill="#1c1c1f" stroke="#3b82f6" stroke-width="2"/>
+  
+  <!-- Terminal header dots -->
+  <circle cx="56" cy="66" r="5" fill="#ef4444"/>
+  <circle cx="72" cy="66" r="5" fill="#eab308"/>
+  <circle cx="88" cy="66" r="5" fill="#22c55e"/>
+  
+  <!-- Terminal lines -->
+  <rect x="52" y="86" width="60" height="4" rx="2" fill="#3b82f6"/>
+  <rect x="52" y="98" width="88" height="4" rx="2" fill="#22c55e" opacity="0.7"/>
+  <rect x="52" y="110" width="40" height="4" rx="2" fill="#a1a1aa" opacity="0.5"/>
+  <rect x="52" y="122" width="72" height="4" rx="2" fill="#a1a1aa" opacity="0.5"/>
+  
+  <!-- Cursor -->
+  <rect x="52" y="118" width="8" height="12" fill="#3b82f6" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.2;0.8" dur="1s" repeatCount="indefinite"/>
+  </rect>
+</svg>
+

@@ -445,6 +445,8 @@ export default {
         return handleDevStats(request, env);
       case '/api/dev/events':
         return handleDevEvents(request, url, env);
+      case '/api/dev/health':
+        return handleHealthCheck(request, env);
       default:
         // Handle dynamic routes like /api/sync/chat/:contactKey
         if (url.pathname.startsWith('/api/sync/chat/')) {
@@ -456,6 +458,11 @@ export default {
         }
         return new Response('Not Found', { status: 404 });
     }
+  },
+  
+  // Cron Trigger handler - runs every 5 minutes
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runHealthCheck(env, 'scheduled'));
   },
 };
 
@@ -657,7 +664,13 @@ async function handleSendMessage(request, env) {
     return errorResponse(request, error.message || 'Failed to enqueue message', 500);
   }
   
-  const msgType = voiceKey ? 'voice' : (ciphertext ? 'encrypted' : 'text');
+  // Determine message type for logging
+  let msgType = 'text';
+  if (voiceKey) msgType = 'voice';
+  else if (text && text.startsWith('__SOLINK_PAYMENT__:')) msgType = 'payment:SOL';
+  else if (tokenPreview) msgType = `token:${tokenPreview.symbol || 'unknown'}`;
+  else if (ciphertext) msgType = 'encrypted';
+  
   await logEvent(env, { type: EventType.INFO, category: Category.MESSAGE, action: 'send', wallet: senderPubkey, details: msgType, status: 200, latency: Date.now() - startTime });
   
   return jsonResponse(request, { ok: true, messageId: message.id });
@@ -2447,7 +2460,7 @@ async function handleDevEvents(request, url, env) {
     if (category && log.category !== category) return false;
     if (search) {
       const searchLower = search.toLowerCase();
-      const searchable = `${log.action} ${log.wallet} ${log.details}`.toLowerCase();
+      const searchable = `${log.id || ''} ${log.action} ${log.wallet} ${log.details}`.toLowerCase();
       if (!searchable.includes(searchLower)) return false;
     }
     return true;
@@ -2466,6 +2479,114 @@ async function handleDevEvents(request, url, env) {
     offset,
     hasMore: offset + limit < total,
   });
+}
+
+// ========================================
+// Health Check
+// ========================================
+
+async function runHealthCheck(env, trigger = 'manual') {
+  const startTime = Date.now();
+  const results = {
+    kv: { status: 'unknown', latency: 0 },
+    r2: { status: 'unknown', latency: 0 },
+    do: { status: 'unknown', latency: 0 },
+    solana: { status: 'unknown', latency: 0 },
+  };
+  
+  // Check KV
+  try {
+    const kvStart = Date.now();
+    const testKey = `health_check_${Date.now()}`;
+    await env.SOLINK_KV.put(testKey, 'ok', { expirationTtl: 60 });
+    const val = await env.SOLINK_KV.get(testKey);
+    await env.SOLINK_KV.delete(testKey);
+    results.kv = { status: val === 'ok' ? 'ok' : 'fail', latency: Date.now() - kvStart };
+  } catch (e) {
+    results.kv = { status: 'fail', error: e.message, latency: Date.now() - startTime };
+  }
+  
+  // Check R2
+  try {
+    const r2Start = Date.now();
+    await env.SOLINK_STORAGE.head('health_check_nonexistent');
+    results.r2 = { status: 'ok', latency: Date.now() - r2Start };
+  } catch (e) {
+    // R2 returns error for non-existent objects, but if it responds, it's working
+    if (e.message?.includes('does not exist') || e.name === 'R2Error') {
+      results.r2 = { status: 'ok', latency: Date.now() - startTime };
+    } else {
+      results.r2 = { status: 'fail', error: e.message, latency: Date.now() - startTime };
+    }
+  }
+  
+  // Check Durable Object
+  try {
+    const doStart = Date.now();
+    const testId = env.INBOX_DO.idFromName('health_check_test');
+    const stub = env.INBOX_DO.get(testId);
+    const response = await stub.fetch('https://do/ping', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'ping' }),
+    });
+    const data = await response.json();
+    results.do = { status: data.ok ? 'ok' : 'fail', latency: Date.now() - doStart };
+  } catch (e) {
+    results.do = { status: 'fail', error: e.message, latency: Date.now() - startTime };
+  }
+  
+  // Check Solana RPC
+  try {
+    const solStart = Date.now();
+    const rpcUrl = env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getSlot',
+      }),
+    });
+    const data = await response.json();
+    results.solana = { 
+      status: data.result ? 'ok' : 'fail', 
+      latency: Date.now() - solStart,
+      slot: data.result,
+    };
+  } catch (e) {
+    results.solana = { status: 'fail', error: e.message, latency: Date.now() - startTime };
+  }
+  
+  const totalLatency = Date.now() - startTime;
+  const allOk = Object.values(results).every(r => r.status === 'ok');
+  
+  // Build details string
+  const details = Object.entries(results)
+    .map(([key, val]) => `${key}:${val.status}(${val.latency}ms)`)
+    .join(' ');
+  
+  // Log to dev console
+  await logEvent(env, {
+    type: allOk ? EventType.INFO : EventType.ERROR,
+    category: Category.SYSTEM,
+    action: 'health',
+    details: `[${trigger}] ${details}`,
+    latency: totalLatency,
+    status: allOk ? 200 : 500,
+  });
+  
+  return { ok: allOk, results, totalLatency, trigger };
+}
+
+async function handleHealthCheck(request, env) {
+  // Verify dev token
+  if (!await verifyDevToken(env, request)) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+  
+  const result = await runHealthCheck(env, 'manual');
+  return jsonResponse(request, result);
 }
 
 export { InboxDurable };

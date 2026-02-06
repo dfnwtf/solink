@@ -74,6 +74,16 @@ export async function logEvent(env, options) {
   }
 }
 
+// Generate short unique ID
+function generateEventId() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let id = '';
+  for (let i = 0; i < 8; i++) {
+    id += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return id;
+}
+
 // Store log in KV for dev console real-time view
 async function storeDevLog(env, logData) {
   try {
@@ -81,6 +91,7 @@ async function storeDevLog(env, logData) {
     
     logsData.unshift({
       ...logData,
+      id: generateEventId(),
       timestamp: Date.now(),
     });
     
