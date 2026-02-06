@@ -34,6 +34,38 @@
     autoRefresh: true,
     refreshTimer: null,
     countdown: REFRESH_INTERVAL / 1000,
+    charts: {
+      timeline: null,
+      categories: null,
+      status: null,
+    },
+  };
+
+  // ===================================
+  // Chart Colors
+  // ===================================
+  
+  const CHART_COLORS = {
+    primary: '#3b82f6',
+    success: '#22c55e',
+    warning: '#eab308',
+    error: '#ef4444',
+    purple: '#8b5cf6',
+    cyan: '#06b6d4',
+    pink: '#ec4899',
+    orange: '#f97316',
+    gray: '#6b7280',
+  };
+  
+  const CATEGORY_COLORS = {
+    auth: CHART_COLORS.primary,
+    message: CHART_COLORS.success,
+    voice: CHART_COLORS.purple,
+    push: CHART_COLORS.cyan,
+    sync: CHART_COLORS.orange,
+    profile: CHART_COLORS.pink,
+    solana: CHART_COLORS.warning,
+    system: CHART_COLORS.gray,
   };
 
   // ===================================
@@ -253,6 +285,10 @@
       updateStats(statsData.stats);
       renderEvents(eventsData.events);
       
+      // Update charts with all events (need to fetch more for charts)
+      const allEventsData = await fetchAllEventsForCharts();
+      updateCharts(allEventsData.events, statsData.stats, statsData.categories);
+      
       state.pagination.total = eventsData.total;
       updatePagination();
       
@@ -269,6 +305,17 @@
     } finally {
       showLoading(false);
     }
+  }
+  
+  async function fetchAllEventsForCharts() {
+    // Fetch more events for accurate chart data
+    const params = new URLSearchParams({
+      period: state.filters.period,
+      limit: 500,
+      offset: 0,
+    });
+    
+    return apiRequest(`/events?${params}`);
   }
   
   function showLoginError(message) {
@@ -416,6 +463,249 @@
   }
 
   // ===================================
+  // Charts
+  // ===================================
+  
+  function initCharts() {
+    // Common chart options
+    const commonOptions = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false,
+        },
+      },
+    };
+    
+    // Timeline chart (line)
+    const timelineCtx = document.getElementById('chart-timeline').getContext('2d');
+    state.charts.timeline = new Chart(timelineCtx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: 'Requests',
+            data: [],
+            borderColor: CHART_COLORS.primary,
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 2,
+            pointHoverRadius: 4,
+          },
+          {
+            label: 'Errors',
+            data: [],
+            borderColor: CHART_COLORS.error,
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 2,
+            pointHoverRadius: 4,
+          },
+        ],
+      },
+      options: {
+        ...commonOptions,
+        scales: {
+          x: {
+            grid: {
+              color: 'rgba(255, 255, 255, 0.05)',
+            },
+            ticks: {
+              color: '#71717a',
+              font: { size: 10 },
+              maxRotation: 0,
+            },
+          },
+          y: {
+            beginAtZero: true,
+            grid: {
+              color: 'rgba(255, 255, 255, 0.05)',
+            },
+            ticks: {
+              color: '#71717a',
+              font: { size: 10 },
+              precision: 0,
+            },
+          },
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+            align: 'end',
+            labels: {
+              color: '#a1a1aa',
+              font: { size: 11 },
+              boxWidth: 12,
+              padding: 8,
+            },
+          },
+        },
+      },
+    });
+    
+    // Categories chart (doughnut)
+    const categoriesCtx = document.getElementById('chart-categories').getContext('2d');
+    state.charts.categories = new Chart(categoriesCtx, {
+      type: 'doughnut',
+      data: {
+        labels: [],
+        datasets: [{
+          data: [],
+          backgroundColor: Object.values(CATEGORY_COLORS),
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        ...commonOptions,
+        cutout: '65%',
+        plugins: {
+          legend: {
+            display: true,
+            position: 'right',
+            labels: {
+              color: '#a1a1aa',
+              font: { size: 10 },
+              boxWidth: 10,
+              padding: 6,
+            },
+          },
+        },
+      },
+    });
+    
+    // Status chart (doughnut)
+    const statusCtx = document.getElementById('chart-status').getContext('2d');
+    state.charts.status = new Chart(statusCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Success', 'Warnings', 'Errors'],
+        datasets: [{
+          data: [0, 0, 0],
+          backgroundColor: [CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.error],
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        ...commonOptions,
+        cutout: '65%',
+        plugins: {
+          legend: {
+            display: true,
+            position: 'right',
+            labels: {
+              color: '#a1a1aa',
+              font: { size: 10 },
+              boxWidth: 10,
+              padding: 6,
+            },
+          },
+        },
+      },
+    });
+  }
+  
+  function updateCharts(events, stats, categories) {
+    // Update timeline chart
+    if (state.charts.timeline && events.length > 0) {
+      const timelineData = buildTimelineData(events);
+      state.charts.timeline.data.labels = timelineData.labels;
+      state.charts.timeline.data.datasets[0].data = timelineData.requests;
+      state.charts.timeline.data.datasets[1].data = timelineData.errors;
+      state.charts.timeline.update('none');
+      
+      // Update subtitle
+      const subtitle = document.getElementById('chart-timeline-subtitle');
+      if (subtitle) {
+        const periodLabels = {
+          '5m': 'Last 5 minutes',
+          '15m': 'Last 15 minutes',
+          '1h': 'Last hour',
+          '6h': 'Last 6 hours',
+          '24h': 'Last 24 hours',
+        };
+        subtitle.textContent = periodLabels[state.filters.period] || 'Last hour';
+      }
+    }
+    
+    // Update categories chart
+    if (state.charts.categories && categories) {
+      const categoryLabels = Object.keys(categories);
+      const categoryData = Object.values(categories);
+      const categoryColors = categoryLabels.map(cat => CATEGORY_COLORS[cat] || CHART_COLORS.gray);
+      
+      state.charts.categories.data.labels = categoryLabels;
+      state.charts.categories.data.datasets[0].data = categoryData;
+      state.charts.categories.data.datasets[0].backgroundColor = categoryColors;
+      state.charts.categories.update('none');
+    }
+    
+    // Update status chart
+    if (state.charts.status && stats) {
+      const success = stats.total - stats.errors - stats.warnings;
+      state.charts.status.data.datasets[0].data = [success, stats.warnings, stats.errors];
+      state.charts.status.update('none');
+    }
+  }
+  
+  function buildTimelineData(events) {
+    // Determine bucket size based on period
+    const periodMs = {
+      '5m': 5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '6h': 6 * 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+    };
+    
+    const period = periodMs[state.filters.period] || periodMs['1h'];
+    const bucketSize = period <= 15 * 60 * 1000 ? 60 * 1000 : // 1 min buckets for <=15m
+                       period <= 60 * 60 * 1000 ? 5 * 60 * 1000 : // 5 min buckets for <=1h
+                       period <= 6 * 60 * 60 * 1000 ? 30 * 60 * 1000 : // 30 min buckets for <=6h
+                       60 * 60 * 1000; // 1 hour buckets for 24h
+    
+    const now = Date.now();
+    const start = now - period;
+    const buckets = new Map();
+    
+    // Initialize buckets
+    for (let t = start; t <= now; t += bucketSize) {
+      const key = Math.floor(t / bucketSize) * bucketSize;
+      buckets.set(key, { requests: 0, errors: 0 });
+    }
+    
+    // Fill buckets with event data
+    events.forEach(event => {
+      const key = Math.floor(event.timestamp / bucketSize) * bucketSize;
+      if (buckets.has(key)) {
+        buckets.get(key).requests++;
+        if (event.type === 'error') {
+          buckets.get(key).errors++;
+        }
+      }
+    });
+    
+    // Convert to arrays
+    const sortedKeys = [...buckets.keys()].sort((a, b) => a - b);
+    const labels = sortedKeys.map(ts => {
+      const date = new Date(ts);
+      if (bucketSize >= 60 * 60 * 1000) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+    
+    const requests = sortedKeys.map(key => buckets.get(key).requests);
+    const errors = sortedKeys.map(key => buckets.get(key).errors);
+    
+    return { labels, requests, errors };
+  }
+
+  // ===================================
   // Utility Functions
   // ===================================
   
@@ -449,6 +739,7 @@
   function init() {
     cacheElements();
     setupEventHandlers();
+    initCharts();
     
     // Check for existing token
     if (state.token) {
