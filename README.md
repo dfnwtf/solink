@@ -36,8 +36,6 @@
 
 SOLink includes a built-in developer console for monitoring and debugging.
 
-**Access:** [solink.chat/dev](https://solink.chat/dev) (password protected)
-
 ### Features
 
 | Feature | Description |
