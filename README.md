@@ -32,6 +32,45 @@
 
 ---
 
+## 🖥️ Developer Console
+
+SOLink includes a built-in developer console for monitoring and debugging.
+
+**Access:** [solink.chat/dev](https://solink.chat/dev) (password protected)
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **📊 Real-time Dashboard** | Live stats: requests, errors, latency, unique wallets |
+| **📈 Charts** | Requests over time, category distribution, status breakdown |
+| **🔍 Event Logs** | Filterable table with all API events |
+| **❤️ Health Check** | Test all systems: KV, R2, Durable Objects, Solana RPC |
+| **🔎 Search** | Find events by ID, action, wallet, or details |
+| **📱 PWA** | Install as standalone app |
+| **🔄 Auto-refresh** | Updates every 10 seconds |
+
+### Event Categories
+
+- `auth` — Login, nonce, verify
+- `message` — Send, poll, ack
+- `voice` — Upload, download voice messages
+- `push` — Push notification subscriptions
+- `sync` — Cloud backup operations
+- `profile` — Nickname updates
+- `solana` — RPC proxy requests
+- `system` — Health checks, dev login
+
+### Scheduled Health Checks
+
+Automatic health check runs every 5 minutes via Cloudflare Cron Trigger, monitoring:
+- KV Storage
+- R2 Storage
+- Durable Objects
+- Solana RPC
+
+---
+
 ## Security
 
 SOLink takes security seriously. We've achieved top ratings across security audits:
@@ -97,20 +136,30 @@ SOLink takes security seriously. We've achieved top ratings across security audi
 SOLink/
 ├── public/
 │   ├── app/           # Main messenger app
-│   ├── css/           # Stylesheets
-│   ├── js/            # Frontend JavaScript
+│   ├── dev/           # Developer console (PWA)
+│   │   ├── index.html # Console UI
+│   │   ├── manifest.json
+│   │   └── sw.js      # Service Worker
+│   ├── css/
+│   │   ├── style.css  # Main app styles
+│   │   └── dev.css    # Dev console styles
+│   ├── js/
 │   │   ├── chat.js    # Main chat logic
+│   │   ├── dev.js     # Dev console logic
 │   │   ├── api.js     # API client
 │   │   ├── db.js      # IndexedDB operations
-│   │   ├── main.js    # Auth & wallet connection
-│   │   └── voice-recorder.js  # Voice recording & waveform
-│   ├── icons/         # App icons for notifications
+│   │   └── main.js    # Auth & wallet connection
+│   ├── icons/         # App icons
 │   ├── sw.js          # Service Worker
 │   └── index.html     # Landing page
 └── worker/
     ├── worker.js      # Cloudflare Worker
     ├── inbox-do.js    # Durable Object queue
-    └── utils/         # Crypto, nonce, rate limiting
+    └── utils/
+        ├── crypto.js  # Crypto utilities
+        ├── nonce.js   # Nonce management
+        ├── ratelimit.js # Rate limiting
+        └── logger.js  # Dev console logging
 ```
 
 ---
@@ -175,6 +224,7 @@ const ciphertext = nacl.box.after(messageBytes, nonce, sharedSecret);
 - [x] Push notifications
 - [x] Mobile swipe gestures (reply/delete)
 - [x] Voice messages with waveform visualization
+- [x] Developer console with analytics
 - [ ] Multi-wallet support (Solflare, Backpack)
 - [ ] Group chats
 - [ ] Image sharing
