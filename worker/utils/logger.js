@@ -15,6 +15,8 @@ export const Category = {
   AUTH: 'auth',
   MESSAGE: 'message',
   VOICE: 'voice',
+  CALL: 'call',
+  WEBRTC: 'webrtc',
   PUSH: 'push',
   SYNC: 'sync',
   PROFILE: 'profile',

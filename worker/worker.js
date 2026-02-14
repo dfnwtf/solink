@@ -2,6 +2,7 @@ import { verifyEd25519Signature, generateToken } from './utils/crypto';
 import { issueNonce, consumeNonce, isNonceValid } from './utils/nonce';
 import { checkAndIncrementRateLimit } from './utils/ratelimit';
 import { InboxDurable, INBOX_DELIVERY_TTL_MS, MAX_BATCH } from './inbox-do';
+import { CallSignalingDurable } from './call-do';
 import { logEvent, Category, EventType } from './utils/logger';
 
 const SESSION_PREFIX = 'session:';
@@ -389,6 +390,14 @@ export default {
       return handleSolanaWebSocketProxy(request, env);
     }
 
+    // WebSocket for call signaling
+    if (
+      url.pathname.startsWith('/api/call/signal/') &&
+      upgradeHeader.toLowerCase() === 'websocket'
+    ) {
+      return handleCallSignalingWebSocket(request, url, env);
+    }
+
     if (!url.pathname.startsWith('/api/')) {
       return new Response('Not Found', { status: 404 });
     }
@@ -447,6 +456,25 @@ export default {
         return handleDevEvents(request, url, env);
       case '/api/dev/health':
         return handleHealthCheck(request, env);
+      case '/api/dev/turn-test':
+        return handleDevTurnTest(request, env);
+      case '/api/dev/webrtc-test-log':
+        return handleWebRTCTestLog(request, env);
+      case '/api/dev/call-stats':
+        return handleDevCallStats(request, env);
+      // Audio Calls API
+      case '/api/call/turn-credentials':
+        return handleTurnCredentials(request, env);
+      case '/api/call/initiate':
+        return handleCallInitiate(request, env);
+      case '/api/call/status':
+        return handleCallStatus(request, url, env);
+      case '/api/call/end':
+        return handleCallEnd(request, env);
+      case '/api/call/notify':
+        return handleCallNotify(request, env);
+      case '/api/call/log':
+        return handleCallLog(request, env);
       default:
         // Handle dynamic routes like /api/sync/chat/:contactKey
         if (url.pathname.startsWith('/api/sync/chat/')) {
@@ -2327,8 +2355,10 @@ async function handleVoiceDelete(request, url, env) {
 
 const DEV_TOKEN_PREFIX = 'dev_token:';
 const DEV_LOG_KEY = 'dev_logs';
+const CALL_LOG_KEY = 'call_logs';
 const DEV_TOKEN_TTL = 24 * 60 * 60; // 24 hours
 const MAX_DEV_LOGS = 500;
+const MAX_CALL_LOGS = 1000;
 
 async function handleDevLogin(request, env) {
   if (request.method !== 'POST') {
@@ -2396,8 +2426,15 @@ async function handleDevStats(request, env) {
   const total = filteredLogs.length;
   const errors = filteredLogs.filter(l => l.type === 'error').length;
   const warnings = filteredLogs.filter(l => l.type === 'warn').length;
-  const avgLatency = total > 0 
-    ? Math.round(filteredLogs.reduce((sum, l) => sum + (l.latency || 0), 0) / total)
+  
+  // Calculate AVG latency excluding health checks, webrtc tests, and call events (not real user requests)
+  const userLogs = filteredLogs.filter(l => 
+    !(l.category === 'system' && l.action === 'health') && 
+    l.category !== 'webrtc' &&
+    l.category !== 'call'
+  );
+  const avgLatency = userLogs.length > 0 
+    ? Math.round(userLogs.reduce((sum, l) => sum + (l.latency || 0), 0) / userLogs.length)
     : 0;
   
   // Category breakdown
@@ -2479,6 +2516,489 @@ async function handleDevEvents(request, url, env) {
     offset,
     hasMore: offset + limit < total,
   });
+}
+
+// ========================================
+// Audio Calls API
+// ========================================
+
+const TURN_CREDENTIALS_TTL = 86400; // 24 hours
+
+/**
+ * Generate short-lived TURN credentials using Cloudflare TURN API
+ */
+async function handleTurnCredentials(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  // Authenticate user
+  const token = extractBearerToken(request);
+  const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!pubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  try {
+    // Get TURN credentials from Cloudflare API
+    const turnTokenId = env.TURN_TOKEN_ID;
+    const turnApiToken = env.TURN_API_TOKEN; // Secret
+    
+    if (!turnTokenId || !turnApiToken) {
+      console.error('[Call] TURN credentials not configured');
+      return errorResponse(request, 'TURN service not configured', 500);
+    }
+
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${turnTokenId}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${turnApiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ttl: TURN_CREDENTIALS_TTL }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[Call] TURN API error:', response.status, errorText);
+      return errorResponse(request, 'Failed to get TURN credentials', 502);
+    }
+
+    // Cloudflare API returns ready-to-use iceServers config
+    // Format: { iceServers: [{ urls: [...] }, { urls: [...], username, credential }] }
+    const turnData = await response.json();
+    
+    console.log('[Call] TURN credentials received:', JSON.stringify(turnData).substring(0, 200));
+
+    logEvent(env, { 
+      type: EventType.INFO, 
+      category: Category.SYSTEM, 
+      action: 'turn_credentials', 
+      wallet: pubkey,
+      status: 200 
+    });
+
+    // Return the Cloudflare response directly - it's already in the correct format
+    return jsonResponse(request, turnData);
+  } catch (error) {
+    console.error('[Call] TURN credentials error:', error);
+    logEvent(env, { 
+      type: EventType.ERROR, 
+      category: Category.SYSTEM, 
+      action: 'turn_credentials', 
+      details: error.message,
+      status: 500 
+    });
+    return errorResponse(request, 'Failed to get TURN credentials', 500);
+  }
+}
+
+/**
+ * Initiate a call to another user
+ */
+async function handleCallInitiate(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const callerPubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!callerPubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  const body = await readJson(request);
+  if (!body || !body.callee) {
+    return errorResponse(request, 'Missing callee', 400);
+  }
+
+  const calleePubkey = normalizePubkey(body.callee);
+  if (!calleePubkey || !isValidPubkey(calleePubkey)) {
+    return errorResponse(request, 'Invalid callee pubkey', 400);
+  }
+
+  if (calleePubkey === callerPubkey) {
+    return errorResponse(request, 'Cannot call yourself', 400);
+  }
+
+  try {
+    // Get caller's profile for display name
+    const callerProfile = await readProfile(env.SOLINK_KV, callerPubkey);
+    const callerName = callerProfile?.nickname 
+      ? `@${callerProfile.nickname}` 
+      : callerProfile?.displayName || shortenPubkey(callerPubkey);
+
+    // Create a unique call room based on sorted pubkeys (so both parties get same room)
+    const roomId = [callerPubkey, calleePubkey].sort().join('_');
+    
+    // Get Durable Object for this call
+    const callDoId = env.CALL_DO.idFromName(roomId);
+    const callDo = env.CALL_DO.get(callDoId);
+
+    // Initiate call in DO
+    const doResponse = await callDo.fetch('https://call', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'initiate',
+        callerId: callerPubkey,
+        calleeId: calleePubkey,
+        callerName,
+      }),
+    });
+
+    const result = await doResponse.json();
+
+    if (!doResponse.ok) {
+      return errorResponse(request, result.error || 'Failed to initiate call', doResponse.status);
+    }
+
+    // Send call notification to callee's inbox (for when app is open)
+    try {
+      const inboxDoId = env.INBOX_DO.idFromName(calleePubkey);
+      const inboxDo = env.INBOX_DO.get(inboxDoId);
+      
+      // Format message for inbox - needs 'id' field and 'text' with JSON payload
+      const inboxMessage = {
+        id: `call_${result.callId}`,
+        from: callerPubkey,
+        text: JSON.stringify({
+          type: 'incoming_call',
+          callId: result.callId,
+          roomId,
+          caller: callerPubkey,
+          callerName,
+          timestamp: Date.now(),
+        }),
+        timestamp: Date.now(),
+        expiresAt: Date.now() + 60000, // Expire after 60 seconds
+      };
+      
+      await inboxDo.fetch('https://inbox', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'store',
+          message: inboxMessage,
+        }),
+      });
+      
+      console.log(`[Call] Sent incoming call notification to ${shortenPubkey(calleePubkey)}`);
+    } catch (inboxErr) {
+      console.error('[Call] Inbox notification error:', inboxErr.message);
+    }
+
+    // Send push notification to callee about incoming call (for when app is closed)
+    try {
+      await sendPushNotification(env, calleePubkey, {
+        title: '📞 Incoming Call',
+        body: `${callerName} is calling you`,
+        icon: '/icons/icon-192.png',
+        badge: '/icons/badge-72.png',
+        tag: `solink-call-${callerPubkey}`,
+        data: {
+          type: 'call',
+          callId: result.callId,
+          caller: callerPubkey,
+          callerName,
+          url: `/app?call=${callerPubkey}`
+        }
+      });
+    } catch (pushErr) {
+      console.error('[Call] Push notification error:', pushErr.message);
+    }
+
+    logEvent(env, { 
+      type: EventType.INFO, 
+      category: Category.CALL, 
+      action: 'call_initiate', 
+      wallet: callerPubkey, 
+      details: `to: ${shortenPubkey(calleePubkey)}`,
+      status: 200 
+    });
+
+    return jsonResponse(request, {
+      success: true,
+      callId: result.callId,
+      roomId,
+      signalUrl: `/api/call/signal/${roomId}`,
+    });
+  } catch (error) {
+    console.error('[Call] Initiate error:', error);
+    return errorResponse(request, 'Failed to initiate call', 500);
+  }
+}
+
+/**
+ * Get call status
+ */
+async function handleCallStatus(request, url, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!pubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  const roomId = url.searchParams.get('room');
+  if (!roomId) {
+    return errorResponse(request, 'Missing room ID', 400);
+  }
+
+  try {
+    const callDoId = env.CALL_DO.idFromName(roomId);
+    const callDo = env.CALL_DO.get(callDoId);
+
+    const doResponse = await callDo.fetch('https://call', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'status' }),
+    });
+
+    const result = await doResponse.json();
+    return jsonResponse(request, result);
+  } catch (error) {
+    console.error('[Call] Status error:', error);
+    return errorResponse(request, 'Failed to get call status', 500);
+  }
+}
+
+/**
+ * End a call
+ */
+async function handleCallEnd(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!pubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  const body = await readJson(request);
+  const roomId = body?.roomId;
+  const endReason = body?.reason || 'ended_by_user';
+  
+  if (!roomId) {
+    return errorResponse(request, 'Missing room ID', 400);
+  }
+
+  try {
+    // First get current call state before ending
+    const callDoId = env.CALL_DO.idFromName(roomId);
+    const callDo = env.CALL_DO.get(callDoId);
+    
+    // Get status first
+    const statusResponse = await callDo.fetch('https://call', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'status' }),
+    });
+    const statusResult = await statusResponse.json();
+    const callState = statusResult.callState;
+
+    // Now end the call
+    const doResponse = await callDo.fetch('https://call', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        action: 'end',
+        reason: endReason 
+      }),
+    });
+
+    const result = await doResponse.json();
+    
+    // Log call event for analytics
+    if (callState) {
+      const duration = callState.answeredAt 
+        ? Math.round((Date.now() - callState.answeredAt) / 1000) 
+        : 0;
+      const successful = callState.status === 'active' || duration > 0;
+      
+      await logCallEvent(env, {
+        callId: callState.callId,
+        caller: shortenPubkey(callState.callerId),
+        callee: shortenPubkey(callState.calleeId),
+        duration,
+        successful,
+        endReason,
+        initiatedAt: callState.initiatedAt,
+        answeredAt: callState.answeredAt,
+      });
+    }
+    
+    logEvent(env, { 
+      type: EventType.INFO, 
+      category: Category.CALL, 
+      action: 'call_end', 
+      wallet: pubkey,
+      details: `reason: ${endReason}`,
+      status: 200 
+    });
+    
+    return jsonResponse(request, result);
+  } catch (error) {
+    console.error('[Call] End error:', error);
+    return errorResponse(request, 'Failed to end call', 500);
+  }
+}
+
+/**
+ * Log call data for analytics (called from client)
+ */
+async function handleCallLog(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const pubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!pubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  try {
+    const body = await readJson(request);
+    const { callId, caller, callee, duration, successful, endReason } = body;
+    
+    if (!callId) {
+      return errorResponse(request, 'Missing call ID', 400);
+    }
+    
+    // Log call event for analytics
+    await logCallEvent(env, {
+      callId,
+      caller: caller ? shortenPubkey(caller) : shortenPubkey(pubkey),
+      callee: callee ? shortenPubkey(callee) : '-',
+      duration: duration || 0,
+      successful: successful || false,
+      endReason: endReason || 'unknown',
+    });
+    
+    // Also log to activity feed
+    logEvent(env, { 
+      type: successful ? EventType.INFO : EventType.WARN, 
+      category: Category.CALL, 
+      action: 'call_end', 
+      wallet: pubkey,
+      details: `duration: ${duration}s, reason: ${endReason}`,
+      status: successful ? 200 : 400,
+    });
+    
+    return jsonResponse(request, { ok: true });
+  } catch (error) {
+    console.error('[Call] Log error:', error);
+    return errorResponse(request, 'Failed to log call', 500);
+  }
+}
+
+/**
+ * Send call notification (missed/cancelled) to another user via Inbox
+ */
+async function handleCallNotify(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const token = extractBearerToken(request);
+  const senderPubkey = await getSessionPubkey(env.SOLINK_KV, token);
+  if (!senderPubkey) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+
+  const body = await readJson(request);
+  if (!body || !body.to || !body.type) {
+    return errorResponse(request, 'Missing required fields (to, type)', 400);
+  }
+
+  const recipientPubkey = normalizePubkey(body.to);
+  if (!recipientPubkey || !isValidPubkey(recipientPubkey)) {
+    return errorResponse(request, 'Invalid recipient pubkey', 400);
+  }
+
+  // Only allow call-related notification types
+  const allowedTypes = ['missed_call', 'cancelled_call'];
+  if (!allowedTypes.includes(body.type)) {
+    return errorResponse(request, 'Invalid notification type', 400);
+  }
+
+  try {
+    // Get sender's Inbox DO to deliver the notification
+    const inboxId = env.INBOX_DO.idFromName(recipientPubkey);
+    const inboxDo = env.INBOX_DO.get(inboxId);
+
+    const inboxMessage = {
+      id: `notify_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      from: senderPubkey,
+      text: JSON.stringify({
+        type: body.type,
+        callId: body.callId,
+        caller: senderPubkey,
+        timestamp: Date.now(),
+      }),
+      timestamp: Date.now(),
+      expiresAt: Date.now() + 30000, // Expire quickly - only needed for real-time
+    };
+
+    await inboxDo.fetch('https://inbox', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'store',
+        message: inboxMessage,
+      }),
+    });
+
+    console.log(`[Call] Sent ${body.type} notification from ${shortenPubkey(senderPubkey)} to ${shortenPubkey(recipientPubkey)}`);
+
+    return jsonResponse(request, { success: true });
+  } catch (error) {
+    console.error('[Call] Notify error:', error);
+    return errorResponse(request, 'Failed to send notification', 500);
+  }
+}
+
+/**
+ * WebSocket handler for call signaling
+ */
+async function handleCallSignalingWebSocket(request, url, env) {
+  // Extract room ID and participant from URL: /api/call/signal/{roomId}?participant={pubkey}
+  const pathParts = url.pathname.split('/');
+  const roomId = pathParts[pathParts.length - 1];
+  const participant = url.searchParams.get('participant');
+
+  console.log(`[Call WS] Room: ${roomId}, Participant: ${participant}`);
+
+  if (!roomId || !participant) {
+    return new Response('Missing room ID or participant', { status: 400 });
+  }
+
+  // Validate participant is part of this room
+  const roomParts = roomId.split('_');
+  if (!roomParts.includes(participant)) {
+    console.log(`[Call WS] Unauthorized: ${participant} not in room ${roomId}`);
+    return new Response('Participant not authorized for this call', { status: 403 });
+  }
+
+  try {
+    const callDoId = env.CALL_DO.idFromName(roomId);
+    const callDo = env.CALL_DO.get(callDoId);
+
+    // Build proper URL for Durable Object
+    const doUrl = new URL(request.url);
+    doUrl.searchParams.set('participant', participant);
+
+    console.log(`[Call WS] Forwarding to DO: ${doUrl.toString()}`);
+
+    // Forward the original request with WebSocket upgrade headers
+    return callDo.fetch(doUrl.toString(), request);
+  } catch (error) {
+    console.error('[Call WS] Error:', error);
+    return new Response('Failed to establish signaling connection', { status: 500 });
+  }
 }
 
 // ========================================
@@ -2589,5 +3109,416 @@ async function handleHealthCheck(request, env) {
   return jsonResponse(request, result);
 }
 
-export { InboxDurable };
+/**
+ * Test TURN credentials for WebRTC diagnostics (dev console)
+ */
+async function handleDevTurnTest(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+  
+  // Verify dev token
+  if (!await verifyDevToken(env, request)) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+  
+  try {
+    const turnTokenId = env.TURN_TOKEN_ID;
+    const turnApiToken = env.TURN_API_TOKEN;
+    
+    if (!turnTokenId || !turnApiToken) {
+      return jsonResponse(request, {
+        ok: false,
+        error: 'TURN credentials not configured in environment',
+      });
+    }
+    
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${turnTokenId}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${turnApiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ttl: 3600 }), // 1 hour for testing
+      }
+    );
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      return jsonResponse(request, {
+        ok: false,
+        error: `Cloudflare TURN API error: ${response.status}`,
+        details: errorText,
+      });
+    }
+    
+    const data = await response.json();
+    
+    return jsonResponse(request, {
+      ok: true,
+      iceServers: data.iceServers,
+      ttl: 3600,
+      provider: 'Cloudflare TURN',
+    });
+    
+  } catch (error) {
+    console.error('[Dev] TURN test error:', error);
+    return jsonResponse(request, {
+      ok: false,
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Get call statistics for dev console
+ */
+async function handleDevCallStats(request, env) {
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+  
+  if (!await verifyDevToken(env, request)) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+  
+  const url = new URL(request.url);
+  const period = url.searchParams.get('period') || '24h';
+  
+  // Get call logs from KV
+  const callLogs = await env.SOLINK_KV.get(CALL_LOG_KEY, 'json') || [];
+  
+  // Calculate time filter
+  const periodMs = {
+    '1h': 60 * 60 * 1000,
+    '6h': 6 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+    '30d': 30 * 24 * 60 * 60 * 1000,
+  };
+  
+  const cutoff = Date.now() - (periodMs[period] || periodMs['24h']);
+  const filteredCalls = callLogs.filter(call => call.timestamp > cutoff);
+  
+  // Calculate stats
+  const totalCalls = filteredCalls.length;
+  const successfulCalls = filteredCalls.filter(c => c.successful);
+  const failedCalls = filteredCalls.filter(c => !c.successful);
+  
+  const totalDuration = successfulCalls.reduce((sum, c) => sum + (c.duration || 0), 0);
+  const avgDuration = successfulCalls.length > 0 ? Math.round(totalDuration / successfulCalls.length) : 0;
+  
+  // Unique users (callers + callees)
+  const uniqueUsers = new Set();
+  filteredCalls.forEach(c => {
+    if (c.caller) uniqueUsers.add(c.caller);
+    if (c.callee) uniqueUsers.add(c.callee);
+  });
+  
+  // End reasons breakdown
+  const endReasons = {};
+  filteredCalls.forEach(c => {
+    const reason = c.endReason || 'unknown';
+    endReasons[reason] = (endReasons[reason] || 0) + 1;
+  });
+  
+  // Duration distribution
+  const durationDistribution = {
+    '<1m': 0,
+    '1-5m': 0,
+    '5-15m': 0,
+    '15-30m': 0,
+    '30m+': 0,
+  };
+  
+  successfulCalls.forEach(c => {
+    const d = c.duration || 0;
+    if (d < 60) durationDistribution['<1m']++;
+    else if (d < 300) durationDistribution['1-5m']++;
+    else if (d < 900) durationDistribution['5-15m']++;
+    else if (d < 1800) durationDistribution['15-30m']++;
+    else durationDistribution['30m+']++;
+  });
+  
+  // Timeline data (bucket by hour or day depending on period)
+  const timeline = buildCallTimeline(filteredCalls, period);
+  
+  // Fetch TURN bandwidth data from Cloudflare API
+  const bandwidth = await fetchTurnBandwidth(env, period, timeline.labels);
+  
+  return jsonResponse(request, {
+    period,
+    stats: {
+      totalCalls,
+      successful: successfulCalls.length,
+      failed: failedCalls.length,
+      avgDuration,
+      totalTalkTime: totalDuration,
+      uniqueUsers: uniqueUsers.size,
+      egress: bandwidth.totalEgress,
+      ingress: bandwidth.totalIngress,
+    },
+    endReasons,
+    durationDistribution,
+    timeline,
+    bandwidth,
+    calls: filteredCalls.slice(0, 50), // Last 50 calls
+  });
+}
+
+function buildCallTimeline(calls, period) {
+  const now = Date.now();
+  const bucketSize = period === '1h' ? 5 * 60 * 1000 : // 5 min buckets
+                     period === '6h' ? 30 * 60 * 1000 : // 30 min buckets
+                     period === '24h' ? 60 * 60 * 1000 : // 1 hour buckets
+                     period === '7d' ? 24 * 60 * 60 * 1000 : // 1 day buckets
+                     24 * 60 * 60 * 1000; // 1 day buckets for 30d
+  
+  const periodMs = {
+    '1h': 60 * 60 * 1000,
+    '6h': 6 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+    '30d': 30 * 24 * 60 * 60 * 1000,
+  };
+  
+  const start = now - (periodMs[period] || periodMs['24h']);
+  const buckets = new Map();
+  
+  // Initialize buckets
+  for (let t = start; t <= now; t += bucketSize) {
+    const key = Math.floor(t / bucketSize) * bucketSize;
+    buckets.set(key, { successful: 0, failed: 0 });
+  }
+  
+  // Fill buckets
+  calls.forEach(call => {
+    const key = Math.floor(call.timestamp / bucketSize) * bucketSize;
+    if (buckets.has(key)) {
+      if (call.successful) {
+        buckets.get(key).successful++;
+      } else {
+        buckets.get(key).failed++;
+      }
+    }
+  });
+  
+  // Convert to arrays
+  const sortedKeys = [...buckets.keys()].sort((a, b) => a - b);
+  const labels = sortedKeys.map(ts => {
+    const date = new Date(ts);
+    if (bucketSize >= 24 * 60 * 60 * 1000) {
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  });
+  
+  return {
+    labels,
+    successful: sortedKeys.map(key => buckets.get(key).successful),
+    failed: sortedKeys.map(key => buckets.get(key).failed),
+  };
+}
+
+/**
+ * Fetch TURN bandwidth data from Cloudflare GraphQL API
+ */
+async function fetchTurnBandwidth(env, period, timelineLabels) {
+  const emptyResult = {
+    labels: timelineLabels,
+    egress: timelineLabels.map(() => 0),
+    ingress: timelineLabels.map(() => 0),
+    totalEgress: 0,
+    totalIngress: 0,
+  };
+  
+  // Check if API credentials are configured
+  // Support both CF_* and CLOUDFLARE_* naming conventions
+  const accountId = env.CF_ACCOUNT_ID || env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = env.CF_API_TOKEN || env.CLOUDFLARE_API_TOKEN;
+  
+  if (!accountId || !apiToken) {
+    console.log('[TURN Analytics] Missing account ID or API token for GraphQL');
+    return emptyResult;
+  }
+  
+  try {
+    const now = new Date();
+    const periodMs = {
+      '1h': 60 * 60 * 1000,
+      '6h': 6 * 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+    };
+    
+    const startTime = new Date(now.getTime() - (periodMs[period] || periodMs['24h']));
+    
+    const query = `
+      query {
+        viewer {
+          accounts(filter: { accountTag: "${accountId}" }) {
+            callsTurnUsageAdaptiveGroups(
+              filter: {
+                datetimeMinute_gt: "${startTime.toISOString()}"
+                datetimeMinute_lt: "${now.toISOString()}"
+              }
+              limit: 1000
+              orderBy: [datetimeMinute_ASC]
+            ) {
+              dimensions {
+                datetimeMinute
+              }
+              sum {
+                egressBytes
+                ingressBytes
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query }),
+    });
+    
+    if (!response.ok) {
+      console.error('[TURN Analytics] API request failed:', response.status);
+      return emptyResult;
+    }
+    
+    const data = await response.json();
+    
+    if (data.errors) {
+      console.error('[TURN Analytics] GraphQL errors:', JSON.stringify(data.errors));
+      return emptyResult;
+    }
+    
+    const usageData = data?.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups || [];
+    
+    if (usageData.length === 0) {
+      return emptyResult;
+    }
+    
+    // Calculate totals
+    let totalEgress = 0;
+    let totalIngress = 0;
+    usageData.forEach(item => {
+      totalEgress += item.sum?.egressBytes || 0;
+      totalIngress += item.sum?.ingressBytes || 0;
+    });
+    
+    // Bucket the data to match timeline labels
+    const bucketSize = period === '1h' ? 5 * 60 * 1000 :
+                       period === '6h' ? 30 * 60 * 1000 :
+                       period === '24h' ? 60 * 60 * 1000 :
+                       period === '7d' ? 24 * 60 * 60 * 1000 :
+                       24 * 60 * 60 * 1000;
+    
+    const buckets = new Map();
+    const startMs = now.getTime() - (periodMs[period] || periodMs['24h']);
+    
+    // Initialize buckets
+    for (let t = startMs; t <= now.getTime(); t += bucketSize) {
+      const key = Math.floor(t / bucketSize) * bucketSize;
+      buckets.set(key, { egress: 0, ingress: 0 });
+    }
+    
+    // Fill buckets with data
+    usageData.forEach(item => {
+      const ts = new Date(item.dimensions.datetimeMinute).getTime();
+      const key = Math.floor(ts / bucketSize) * bucketSize;
+      if (buckets.has(key)) {
+        buckets.get(key).egress += item.sum?.egressBytes || 0;
+        buckets.get(key).ingress += item.sum?.ingressBytes || 0;
+      }
+    });
+    
+    // Convert to arrays matching timeline
+    const sortedKeys = [...buckets.keys()].sort((a, b) => a - b);
+    
+    return {
+      labels: timelineLabels,
+      egress: sortedKeys.map(key => buckets.get(key).egress),
+      ingress: sortedKeys.map(key => buckets.get(key).ingress),
+      totalEgress,
+      totalIngress,
+    };
+    
+  } catch (e) {
+    console.error('[TURN Analytics] Error fetching bandwidth:', e.message);
+    return emptyResult;
+  }
+}
+
+/**
+ * Log a call event to KV for analytics
+ */
+async function logCallEvent(env, callData) {
+  try {
+    const callLogs = await env.SOLINK_KV.get(CALL_LOG_KEY, 'json') || [];
+    
+    callLogs.unshift({
+      ...callData,
+      timestamp: Date.now(),
+    });
+    
+    // Keep only last MAX_CALL_LOGS
+    while (callLogs.length > MAX_CALL_LOGS) {
+      callLogs.pop();
+    }
+    
+    await env.SOLINK_KV.put(CALL_LOG_KEY, JSON.stringify(callLogs));
+  } catch (e) {
+    console.error('[Call Analytics] Failed to log call:', e.message);
+  }
+}
+
+/**
+ * Log WebRTC test results to activity feed (KV + Analytics)
+ */
+async function handleWebRTCTestLog(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+  
+  // Verify dev token
+  if (!await verifyDevToken(env, request)) {
+    return errorResponse(request, 'Unauthorized', 401);
+  }
+  
+  try {
+    const data = await request.json();
+    const { turn, ice, candidates, iceTypes, overall } = data;
+    
+    // Build details string
+    const details = `TURN: ${turn}, ICE: ${ice}, Candidates: ${candidates} (host:${iceTypes?.host || 0}, srflx:${iceTypes?.srflx || 0}, relay:${iceTypes?.relay || 0})`;
+    
+    // Log using the standard logger (writes to both KV and Analytics)
+    await logEvent(env, {
+      type: overall === 'ok' ? 'info' : 'warn',
+      category: 'webrtc',
+      action: 'connection_test',
+      details: details,
+      status: overall === 'ok' ? 200 : 500,
+      latency: 0,
+    });
+    
+    return jsonResponse(request, { ok: true, logged: true });
+    
+  } catch (error) {
+    console.error('[Dev] WebRTC test log error:', error);
+    return jsonResponse(request, { ok: false, error: error.message });
+  }
+}
+
+export { InboxDurable, CallSignalingDurable };
 

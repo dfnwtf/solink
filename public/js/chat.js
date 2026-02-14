@@ -1,5 +1,12 @@
 import nacl from "https://cdn.skypack.dev/tweetnacl@1.0.3?min";
 
+// Audio Calls modules
+import { callManager, CallState } from './call/call-manager.js';
+import { callUI } from './call/call-ui.js';
+
+// Make callManager available globally for incoming call notifications
+window.callManager = callManager;
+
 // Base58 alphabet (same as Bitcoin/Solana)
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
@@ -340,6 +347,151 @@ function initSyncChannel() {
   } catch (error) {
     console.warn("[Sync] Failed to create channel:", error);
   }
+}
+
+// ============================================
+// Audio Calls
+// ============================================
+
+function initAudioCalls() {
+  // Initialize call UI
+  callUI.init();
+  
+  // Subscribe to call manager events
+  callManager.on('stateChange', ({ state: callState }) => {
+    console.log('[Chat] Call state changed:', callState);
+  });
+  
+  callManager.on('callEnded', async ({ call, reason, duration }) => {
+    console.log('[Chat] Call ended:', reason, 'duration:', duration);
+    const durationText = duration > 0 ? formatCallDuration(duration) : '';
+    
+    if (reason === 'rejected') {
+      showToast('Call was declined');
+    } else if (reason === 'timeout') {
+      showToast('No answer');
+    } else if (reason === 'error') {
+      showToast('Call failed');
+    } else if (durationText) {
+      showToast(`Call ended (${durationText})`);
+    }
+    
+    // Create call history message in chat
+    if (call) {
+      const contactKey = call.isOutgoing ? call.calleeId : call.callerId;
+      if (contactKey) {
+        await createCallHistoryMessage(contactKey, {
+          isOutgoing: call.isOutgoing,
+          reason,
+          duration,
+          timestamp: Date.now(),
+        });
+      }
+    }
+  });
+  
+  callManager.on('error', (error) => {
+    console.error('[Chat] Call error:', error);
+    showToast(error.message || 'Call error');
+  });
+  
+  // Check URL for incoming call parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const incomingCallFrom = urlParams.get('call');
+  if (incomingCallFrom) {
+    // Remove call param from URL
+    urlParams.delete('call');
+    const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+    window.history.replaceState({}, '', newUrl);
+    
+    // Handle incoming call when authenticated
+    setTimeout(() => {
+      if (latestAppState?.isAuthenticated) {
+        handleIncomingCallNotification(incomingCallFrom);
+      }
+    }, 1000);
+  }
+  
+  console.log('[Chat] Audio calls initialized');
+}
+
+async function handleIncomingCallNotification(callerPubkey) {
+  try {
+    // Create room ID (sorted pubkeys)
+    const myPubkey = latestAppState?.walletPubkey;
+    if (!myPubkey) return;
+    
+    const roomId = [callerPubkey, myPubkey].sort().join('_');
+    
+    // Get caller info
+    const contact = state.contacts.find(c => c.pubkey === callerPubkey);
+    const callerName = contact?.localName || shortenPubkey(callerPubkey, 6);
+    
+    // Handle as incoming call
+    await callManager.handleIncomingCall({
+      callId: crypto.randomUUID(),
+      callerId: callerPubkey,
+      callerName,
+      roomId,
+    });
+  } catch (error) {
+    console.error('[Chat] Handle incoming call error:', error);
+  }
+}
+
+function formatCallDuration(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Create a call history message in chat
+ */
+async function createCallHistoryMessage(contactKey, callInfo) {
+  const { isOutgoing, reason, duration, timestamp } = callInfo;
+  
+  // Determine call type for display
+  let callType = 'call';
+  if (duration > 0) {
+    callType = isOutgoing ? 'outgoing' : 'incoming';
+  } else if (reason === 'rejected') {
+    callType = isOutgoing ? 'declined' : 'declined';
+  } else if (reason === 'timeout' || reason === 'no_answer') {
+    callType = isOutgoing ? 'no_answer' : 'missed';
+  } else if (reason === 'cancelled' || reason === 'ended_by_user') {
+    callType = isOutgoing ? 'cancelled' : 'missed';
+  } else if (reason === 'disconnected' || reason === 'error') {
+    callType = 'failed';
+  }
+  
+  const message = {
+    id: `call-${timestamp}-${crypto.randomUUID()}`,
+    contactKey,
+    direction: isOutgoing ? 'out' : 'in',
+    text: '',
+    timestamp,
+    status: 'delivered',
+    meta: {
+      systemType: 'call',
+      call: {
+        type: callType,
+        isOutgoing,
+        duration,
+        reason,
+      },
+    },
+  };
+  
+  await addMessage(message);
+  appendMessageToState(contactKey, message);
+  
+  if (state.activeContactKey === contactKey) {
+    renderMessages(contactKey);
+  }
+  
+  renderContactList();
 }
 
 function broadcastSync(type, data) {
@@ -1041,6 +1193,9 @@ function cacheDom() {
   ui.scannerPasteBtn = document.querySelector("[data-action=\"scanner-paste\"]");
   ui.scannerClearBtn = document.querySelector("[data-action=\"scanner-clear\"]");
   ui.scannerOpenDfnBtn = document.querySelector("[data-action=\"scanner-open-dfn\"]");
+
+  // Audio call button
+  ui.callButton = document.querySelector("[data-action=\"start-call\"]");
 
   ui.onboarding = document.querySelector("[data-role=\"onboarding\"]");
   ui.nicknameForm = document.querySelector("[data-role=\"nickname-form\"]");
@@ -2275,6 +2430,22 @@ function bindEvents() {
     await refreshContacts();
     clearChatView();
     showToast("Contact removed");
+  });
+
+  // Audio call button
+  ui.callButton?.addEventListener("click", async () => {
+    if (!state.activeContactKey || !latestAppState?.isAuthenticated) return;
+    
+    try {
+      const contact = state.contacts.find(c => c.pubkey === state.activeContactKey);
+      const contactName = contact?.localName || shortenPubkey(state.activeContactKey, 6);
+      
+      showToast("Starting call...");
+      await callManager.initiateCall(state.activeContactKey, contactName);
+    } catch (error) {
+      console.error("[Call] Failed to start call:", error);
+      showToast(error.message || "Failed to start call");
+    }
   });
 
   // Scanner panel actions
@@ -3990,6 +4161,22 @@ function getMessagePreviewText(message) {
   if (nicknameChange) {
     return `Changed nickname: ${nicknameChange.oldName} → ${nicknameChange.newName}`;
   }
+  // Check for call message
+  if (message.meta?.systemType === 'call' && message.meta?.call) {
+    const call = message.meta.call;
+    const isMissed = ['missed', 'declined', 'no_answer', 'failed', 'cancelled'].includes(call.type);
+    const icon = isMissed ? '📞' : '📞';
+    switch (call.type) {
+      case 'outgoing': return `${icon} Outgoing call`;
+      case 'incoming': return `${icon} Incoming call`;
+      case 'missed': return `📵 Missed call`;
+      case 'declined': return `📵 Declined call`;
+      case 'no_answer': return `📵 No answer`;
+      case 'cancelled': return `📵 Cancelled call`;
+      case 'failed': return `📵 Call failed`;
+      default: return `${icon} Call`;
+    }
+  }
   // Check for voice message
   if (message.meta?.voice) {
     return "Voice message";
@@ -4146,6 +4333,8 @@ function updateContactHeader() {
     setTextContent(ui.chatName, "Select chat");
     setTextContent(ui.chatStatus, "No conversation yet");
     setAvatar(ui.chatAvatar, "solink", 52, "SOLink");
+    // Hide call button when no chat selected
+    if (ui.callButton) ui.callButton.hidden = true;
     return;
   }
 
@@ -4160,6 +4349,12 @@ function updateContactHeader() {
     setAvatar(ui.chatAvatar, state.activeContactKey, 52, state.activeContactKey);
   }
   ui.chatHeaderMain.classList.add("is-active");
+  
+  // Show call button for regular contacts (not scanner)
+  const isScanner = state.activeContactKey === SCANNER_CONTACT_KEY;
+  if (ui.callButton) {
+    ui.callButton.hidden = isScanner || !latestAppState?.isAuthenticated;
+  }
 }
 
 function toggleEmptyState(isVisible) {
@@ -4239,6 +4434,11 @@ function createMessageBubble(message, highlightQueryText) {
   
   if (ensureNicknameChangeMeta(message)) {
     return createNicknameChangeBubble(message);
+  }
+  
+  // Check for call message
+  if (message.meta?.systemType === 'call' && message.meta?.call) {
+    return createCallBubble(message);
   }
   
   // Check for scan report message
@@ -4952,6 +5152,76 @@ function createNicknameChangeBubble(message) {
   meta.textContent = formatTime(message.timestamp);
 
   bubble.appendChild(textEl);
+  bubble.appendChild(meta);
+  return bubble;
+}
+
+function createCallBubble(message) {
+  const callMeta = message.meta?.call;
+  if (!callMeta) return null;
+  
+  const bubble = document.createElement("div");
+  const isMissed = ['missed', 'declined', 'no_answer', 'failed', 'cancelled'].includes(callMeta.type);
+  bubble.className = `bubble bubble--system bubble--call ${isMissed ? 'bubble--call-missed' : 'bubble--call-success'}`;
+  bubble.dataset.messageId = message.id;
+
+  // Call icon
+  const iconSvg = callMeta.isOutgoing
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="call-icon call-icon--outgoing">
+         <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+         <polyline points="17 2 22 2 22 7"/>
+       </svg>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="call-icon call-icon--incoming">
+         <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+         <polyline points="7 2 2 2 2 7"/>
+       </svg>`;
+
+  // Call text
+  let callText = '';
+  switch (callMeta.type) {
+    case 'outgoing':
+      callText = 'Outgoing call';
+      break;
+    case 'incoming':
+      callText = 'Incoming call';
+      break;
+    case 'missed':
+      callText = 'Missed call';
+      break;
+    case 'declined':
+      callText = callMeta.isOutgoing ? 'Call declined' : 'Declined call';
+      break;
+    case 'no_answer':
+      callText = 'No answer';
+      break;
+    case 'cancelled':
+      callText = 'Cancelled call';
+      break;
+    case 'failed':
+      callText = 'Call failed';
+      break;
+    default:
+      callText = 'Call';
+  }
+  
+  // Duration text
+  const durationText = callMeta.duration > 0 ? formatCallDuration(callMeta.duration) : '';
+
+  const content = document.createElement("div");
+  content.className = "bubble__call-content";
+  content.innerHTML = `
+    <div class="bubble__call-icon">${iconSvg}</div>
+    <div class="bubble__call-info">
+      <span class="bubble__call-text">${callText}</span>
+      ${durationText ? `<span class="bubble__call-duration">${durationText}</span>` : ''}
+    </div>
+  `;
+
+  const meta = document.createElement("div");
+  meta.className = "bubble__meta bubble__meta--system";
+  meta.textContent = formatTime(message.timestamp);
+
+  bubble.appendChild(content);
   bubble.appendChild(meta);
   return bubble;
 }
@@ -7136,6 +7406,64 @@ async function handleIncomingMessages(messages) {
   const ackIds = [];
 
   for (const payload of messages) {
+    // Check if this is a call notification message
+    if (payload.text) {
+      try {
+        const parsed = JSON.parse(payload.text);
+        // Log all parsed call-related messages
+        if (parsed.type) {
+          console.log('[Inbox] Parsed message type:', parsed.type, parsed);
+        }
+        if (parsed.type === 'incoming_call') {
+          console.log('[Call] Incoming call notification:', parsed);
+          // Handle incoming call via CallManager
+          if (window.callManager) {
+            window.callManager.handleIncomingCallNotification({
+              callId: parsed.callId,
+              roomId: parsed.roomId,
+              callerId: parsed.caller,
+              callerName: parsed.callerName,
+              timestamp: parsed.timestamp,
+            });
+          }
+          // Acknowledge this message
+          if (payload.id) {
+            ackIds.push(payload.id);
+          }
+          continue; // Skip normal message processing
+        }
+        
+        // Handle missed/cancelled call notification - close incoming call UI
+        if (parsed.type === 'missed_call' || parsed.type === 'cancelled_call') {
+          console.log('[Call] Call ended notification:', parsed.type, 'from:', parsed.caller);
+          if (window.callManager) {
+            const currentCall = window.callManager.currentCall;
+            console.log('[Call] Current call state:', {
+              hasCurrentCall: !!currentCall,
+              isOutgoing: currentCall?.isOutgoing,
+              callerId: currentCall?.callerId,
+              parsedCaller: parsed.caller,
+            });
+            // If we have an active incoming call from this caller, cancel it
+            if (currentCall && !currentCall.isOutgoing && currentCall.callerId === parsed.caller) {
+              console.log('[Call] Cancelling incoming call');
+              window.callManager.handleCallCancelled(parsed.type);
+            } else if (currentCall && !currentCall.isOutgoing) {
+              // Caller might be different format - try anyway
+              console.log('[Call] Caller mismatch, forcing cancel anyway');
+              window.callManager.handleCallCancelled(parsed.type);
+            }
+          }
+          if (payload.id) {
+            ackIds.push(payload.id);
+          }
+          continue;
+        }
+      } catch (e) {
+        // Not JSON or not a call message, process normally
+      }
+    }
+
     // Debug: log incoming message payload
     console.log('[Incoming] Message payload:', {
       from: payload.from?.slice(0, 8),
@@ -8675,6 +9003,9 @@ async function initialize() {
   
   // Initialize cross-tab sync
   initSyncChannel();
+
+  // Initialize audio calls UI
+  initAudioCalls();
 
   await ensureEncryptionKeys();
   await loadWorkspace(null);
