@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://solink.chat">🌐 Live Demo</a> •
+  <a href="https://solink.chat">🌐 Website</a> •
   <a href="https://solink.chat/app">💬 Open Messenger</a> •
   <a href="#security">🔒 Security</a>
 </p>
