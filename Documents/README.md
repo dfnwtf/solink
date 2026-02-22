@@ -17,3 +17,6 @@
 ## Token Scanner
 <img src="SVG/token-scanner-card.svg" alt="Token Scanner Card" width="2000">
 
+## CTA
+<img src="SVG/cta-card-gen.svg" alt="Call-to-Action Card" width="2000">
+
