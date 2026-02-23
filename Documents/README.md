@@ -1,6 +1,8 @@
 # SOLink Presentation Gallery
 
 > Inline preview of the SVG assets inside this folder.
+>
+> Presentation: https://solink.chat/presentation
 
 ## Cover
 <img src="SVG/Background+logo.svg" alt="SOLink Cover" width="2000">
