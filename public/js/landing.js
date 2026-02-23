@@ -61,7 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // About block elements
-  document.querySelectorAll('.about-block__header, .flow-diagram, .about-block__features').forEach(el => {
+  document.querySelectorAll('.about-block__header, .flow-diagram, .about-block__features, .about-block__cta').forEach(el => {
     elementObserver.observe(el);
   });
 
