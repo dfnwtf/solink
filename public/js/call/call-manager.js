@@ -645,8 +645,12 @@ class CallManager {
   playRingtone(type) {
     this.stopRingtone();
     
-    // Use existing inbox sound for now
-    this.ringtoneElement = new Audio('/media/inbox.mp3');
+    const source =
+      type === 'outgoing'
+        ? '/media/caller.mp3'   // Tone while dialing out
+        : '/media/incoming.mp3'; // Ringtone for the callee
+
+    this.ringtoneElement = new Audio(source);
     this.ringtoneElement.loop = true;
     this.ringtoneElement.play().catch(e => console.warn('Cannot play ringtone:', e));
   }

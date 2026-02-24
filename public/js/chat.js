@@ -217,6 +217,9 @@ import {
   isMobileDevice,
   initiateMobileTransaction,
   hasMobileSession,
+  hasPendingMobileSign,
+  continueMobileSign,
+  clearPendingMobileSign,
 } from "./main.js";
 import {
   sendMessage,
@@ -1114,6 +1117,10 @@ function cacheDom() {
   ui.installAppSettingsBtn = document.querySelector("[data-action=\"install-app-settings\"]");
   ui.connectOverlay = document.querySelector("[data-role=\"connect-overlay\"]");
   ui.overlayConnectButton = document.querySelector("[data-role=\"connect-overlay\"] [data-action=\"connect-wallet\"]");
+  ui.connectPanel = document.querySelector("[data-role=\"connect-panel\"]");
+  ui.continueSignPanel = document.querySelector("[data-role=\"continue-sign-panel\"]");
+  ui.continueSignButton = document.querySelector("[data-action=\"continue-sign\"]");
+  ui.cancelSignButton = document.querySelector("[data-action=\"cancel-sign\"]");
 
   ui.sidebar = document.querySelector(".list-column");
   ui.sidebarDefault = document.querySelector("[data-role=\"sidebar-default\"]");
@@ -2282,6 +2289,30 @@ function bindEvents() {
     });
   };
 
+  // iOS Safari: continue mobile sign flow
+  const handleContinueSignClick = () => {
+    console.log('[Chat] Continue sign clicked!');
+    try {
+      const result = continueMobileSign();
+      console.log('[Chat] continueMobileSign returned:', result);
+      if (!result) {
+        showToast("Sign flow expired. Please try again.");
+        toggleConnectOverlay(true, false);
+      }
+    } catch (error) {
+      console.error('[Chat] Error in handleContinueSignClick:', error);
+      showToast("Error: " + error.message);
+      toggleConnectOverlay(true, false);
+    }
+  };
+
+  // Cancel mobile sign flow
+  const handleCancelSignClick = () => {
+    console.log('[Chat] Cancel sign clicked');
+    clearPendingMobileSign();
+    toggleConnectOverlay(true, false);
+  };
+
   const handleInstallClick = async () => {
     const browser = ui.navInstall?.dataset.browser || ui.installAppOption?.dataset.browser;
     
@@ -2367,6 +2398,8 @@ function bindEvents() {
   ui.navReconnect?.addEventListener("click", handleReconnectClick);
   ui.reconnectSettingsBtn?.addEventListener("click", handleReconnectClick);
   ui.overlayConnectButton?.addEventListener("click", handleConnectClick);
+  ui.continueSignButton?.addEventListener("click", handleContinueSignClick);
+  ui.cancelSignButton?.addEventListener("click", handleCancelSignClick);
   
   // PWA Install buttons (nav rail + settings)
   ui.navInstall?.addEventListener("click", handleInstallClick);
@@ -6624,15 +6657,25 @@ function toggleComposer(enabled) {
   updatePaymentControls();
 }
 
-function toggleConnectOverlay(visible) {
-  console.log('[Chat] toggleConnectOverlay called, visible:', visible);
-  console.log('[Chat] ui.connectOverlay:', ui.connectOverlay);
+function toggleConnectOverlay(visible, showContinueSign = false) {
+  console.log('[Chat] toggleConnectOverlay called, visible:', visible, 'showContinueSign:', showContinueSign);
+  
   if (!ui.connectOverlay) {
     console.log('[Chat] connectOverlay element not found!');
     return;
   }
+  
   ui.connectOverlay.hidden = !visible;
-  console.log('[Chat] connectOverlay.hidden set to:', ui.connectOverlay.hidden);
+  
+  // Toggle between connect panel and continue sign panel
+  // IMPORTANT: Always set both panels to ensure correct state
+  if (ui.connectPanel && ui.continueSignPanel) {
+    ui.connectPanel.hidden = showContinueSign;
+    ui.continueSignPanel.hidden = !showContinueSign;
+    console.log('[Chat] connectPanel.hidden:', ui.connectPanel.hidden, 'continueSignPanel.hidden:', ui.continueSignPanel.hidden);
+  } else {
+    console.warn('[Chat] Panel elements not found! connectPanel:', !!ui.connectPanel, 'continueSignPanel:', !!ui.continueSignPanel);
+  }
 }
 
 function getPaymentAmountValue() {
@@ -7404,6 +7447,7 @@ async function handleIncomingMessages(messages) {
   if (!messages.length) return;
 
   const ackIds = [];
+  let deliveredMessageCount = 0;
 
   for (const payload of messages) {
     // Check if this is a call notification message
@@ -7664,6 +7708,7 @@ async function handleIncomingMessages(messages) {
 
     await addMessage(message);
     appendMessageToState(from, message);
+    deliveredMessageCount += 1;
     
     // Broadcast to other tabs
     broadcastSync("MESSAGE_RECEIVED", {
@@ -7686,7 +7731,9 @@ async function handleIncomingMessages(messages) {
     }
   }
 
-  playNotificationSound();
+  if (deliveredMessageCount > 0) {
+    playNotificationSound();
+  }
   await refreshContacts(false);
 
   if (ackIds.length) {
@@ -7890,10 +7937,6 @@ function handleMobileBack() {
 const PWA_TOOLTIP_SHOWN_KEY = "solink_install_tooltip_shown";
 const PWA_INSTALLED_KEY = "solink_app_installed";
 
-// Backup reminder
-const BACKUP_REMINDER_KEY = "solink_last_backup_reminder";
-const BACKUP_REMINDER_INTERVAL = 7 * 24 * 60 * 60 * 1000; // 7 days
-
 function initPWA() {
   const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -8082,101 +8125,6 @@ function hideInstallPromotion() {
     tooltip.classList.remove("is-visible");
     setTimeout(() => tooltip.remove(), 300);
   }
-}
-
-// Backup reminder functionality
-const BACKUP_REMINDER_DELAY = 10 * 60 * 1000; // 10 minutes after authorization
-
-// Expose for testing in console
-window.testBackupReminder = function() {
-  localStorage.removeItem(BACKUP_REMINDER_KEY);
-  showBackupReminder();
-};
-
-function checkBackupReminder() {
-  const lastReminder = localStorage.getItem(BACKUP_REMINDER_KEY);
-  const now = Date.now();
-  
-  // Check if enough time has passed since last reminder
-  if (lastReminder && (now - parseInt(lastReminder, 10)) < BACKUP_REMINDER_INTERVAL) {
-    return;
-  }
-  
-  // Check if user has any contacts (no need to remind if empty)
-  if (state.contacts.length === 0) {
-    return;
-  }
-  
-  // Show reminder after 10 minutes
-  setTimeout(() => {
-    // Re-check conditions in case things changed
-    if (state.contacts.length > 0) {
-      showBackupReminder();
-    }
-  }, BACKUP_REMINDER_DELAY);
-}
-
-function showBackupReminder() {
-  // Don't show if already showing
-  if (document.querySelector(".backup-toast")) return;
-  
-  const toast = document.createElement("div");
-  toast.className = "backup-toast";
-  toast.innerHTML = `
-    <div class="backup-toast__icon">🔐</div>
-    <div class="backup-toast__content">
-      <div class="backup-toast__title">Backup your conversations</div>
-      <p class="backup-toast__text">
-        Your messages are <strong>end-to-end encrypted</strong> and stored only on your device. 
-        We can't recover them — only you can back them up.
-      </p>
-      <p class="backup-toast__text backup-toast__text--warning">
-        Clearing browser data <strong>may lead to data loss</strong>.
-      </p>
-      <p class="backup-toast__hint">This reminder appears once a week</p>
-    </div>
-    <div class="backup-toast__actions">
-      <button type="button" class="backup-toast__btn backup-toast__btn--secondary" data-action="remind-later">
-        Later
-      </button>
-      <button type="button" class="backup-toast__btn" data-action="backup-now">
-        Backup
-      </button>
-    </div>
-  `;
-  
-  document.body.appendChild(toast);
-  
-  // Animate in
-  requestAnimationFrame(() => {
-    toast.classList.add("is-visible");
-  });
-  
-  const closeToast = () => {
-    toast.classList.remove("is-visible");
-    setTimeout(() => toast.remove(), 300);
-  };
-  
-  // Remind later - snooze for 7 days
-  toast.querySelector("[data-action='remind-later']").addEventListener("click", () => {
-    localStorage.setItem(BACKUP_REMINDER_KEY, Date.now().toString());
-    closeToast();
-  });
-  
-  // Backup now - trigger export and close
-  toast.querySelector("[data-action='backup-now']").addEventListener("click", async () => {
-    localStorage.setItem(BACKUP_REMINDER_KEY, Date.now().toString());
-    closeToast();
-    await handleExportData();
-  });
-  
-  // Auto-hide after 30 seconds
-  setTimeout(() => {
-    if (document.body.contains(toast)) {
-      localStorage.setItem(BACKUP_REMINDER_KEY, Date.now().toString());
-      closeToast();
-    }
-  }, 30000);
 }
 
 // Smart scrollbar - shows only when mouse is near the edge
@@ -8858,7 +8806,18 @@ async function handleAppStateChange(appState) {
   updateProfileHeader();
   const hasSession = Boolean(appState?.walletPubkey && appState?.isAuthenticated);
   console.log('[Chat] hasSession:', hasSession, 'walletPubkey:', appState?.walletPubkey, 'isAuthenticated:', appState?.isAuthenticated);
-  toggleConnectOverlay(!hasSession);
+  
+  // Check if we're in the middle of mobile sign flow (iOS Safari)
+  // hasPendingMobileSign checks localStorage directly - works even in new tab
+  const pendingSign = hasPendingMobileSign();
+  console.log('[Chat] pendingMobileSign:', pendingSign, 'hasSession:', hasSession);
+  
+  if (pendingSign && !hasSession) {
+    // Show "Continue to sign" panel (mobile only)
+    toggleConnectOverlay(true, true);
+  } else {
+    toggleConnectOverlay(!hasSession, false);
+  }
 
   toggleComposer(Boolean(appState?.isAuthenticated && state.activeContactKey));
   updatePaymentRecipient(state.activeContactKey);
@@ -8890,8 +8849,6 @@ async function handleAppStateChange(appState) {
       
       // Show install promotion after first successful auth
       showInstallPromotion();
-      // Check if backup reminder is needed
-      checkBackupReminder();
       // Sync push toggle and check if we should show the prompt (AFTER restore)
       syncPushToggle();
       checkPushPrompt();
