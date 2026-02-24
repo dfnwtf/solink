@@ -148,6 +148,7 @@
   gap: var(--space-lg);
   padding: 0 var(--space-xl) var(--space-lg);
   background: var(--bg-primary);
+  overflow: hidden;
 }
 
 .charts-row:first-of-type {
@@ -159,6 +160,8 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
+  min-width: 0; /* Important for flexbox/grid children to shrink */
+  overflow: hidden;
 }
 
 .chart-card--wide {
@@ -187,6 +190,9 @@
 .chart-container {
   position: relative;
   height: 200px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chart-container--small {
@@ -482,7 +488,11 @@
   color: var(--text-muted);
 }
 
-/* Responsive */
+/* ===================================
+   RESPONSIVE
+   =================================== */
+
+/* Large desktop */
 @media (max-width: 1200px) {
   .stats-grid {
     grid-template-columns: repeat(3, 1fr);
@@ -497,7 +507,54 @@
   }
 }
 
+/* Tablet */
+@media (max-width: 900px) {
+  .header {
+    flex-wrap: wrap;
+    gap: var(--space-md);
+  }
+  
+  .header-brand {
+    order: 1;
+  }
+  
+  .header-actions {
+    order: 2;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+  
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    padding: var(--space-md);
+    gap: var(--space-sm);
+  }
+  
+  .calls-filters {
+    padding: var(--space-md);
+  }
+  
+  .calls-filters .filter-group--search {
+    max-width: none;
+  }
+}
+
+/* Small tablet / Large phone */
 @media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--space-md);
+  }
+  
+  .header-brand {
+    justify-content: center;
+  }
+  
+  .header-actions {
+    justify-content: center;
+  }
+  
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
     padding: var(--space-md);
@@ -519,10 +576,25 @@
   
   .charts-row {
     padding: 0 var(--space-md) var(--space-md);
+    gap: var(--space-md);
+  }
+  
+  .chart-card {
+    padding: var(--space-md);
+    min-width: 0;
+  }
+  
+  .chart-container {
+    height: 180px;
+    min-width: 0;
   }
   
   .calls-section {
     margin: 0 var(--space-md) var(--space-md);
+  }
+  
+  .section-header {
+    padding: var(--space-md);
   }
   
   .period-bar {
@@ -537,25 +609,204 @@
   .header-actions .btn span {
     display: none;
   }
+  
+  .calls-filters {
+    gap: var(--space-sm);
+  }
+  
+  .calls-filters .filter-group {
+    flex: 1;
+    min-width: 100px;
+  }
+  
+  /* Hide Callee and End Reason on tablet */
+  .calls-table th:nth-child(3),
+  .calls-table td:nth-child(3),
+  .calls-table th:nth-child(6),
+  .calls-table td:nth-child(6) {
+    display: none;
+  }
 }
 
-@media (max-width: 480px) {
+/* Phone */
+@media (max-width: 600px) {
+  .header {
+    padding: var(--space-sm) var(--space-md);
+  }
+  
+  .header-back {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .header-back svg {
+    width: 16px;
+    height: 16px;
+  }
+  
+  .header-logo {
+    font-size: 14px;
+  }
+  
+  .header-title {
+    font-size: 13px;
+  }
+  
+  .header-actions .btn {
+    padding: var(--space-sm);
+  }
+  
+  .connection-status .status-text {
+    display: none;
+  }
+  
+  .period-bar {
+    padding: var(--space-sm) var(--space-md);
+  }
+  
+  .period-tab {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 12px;
+  }
+  
   .stats-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-sm);
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
   }
   
   .stat-card {
     flex-direction: column;
     text-align: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm);
+  }
+  
+  .stat-icon {
+    font-size: 20px;
+    width: 32px;
+    height: 32px;
+  }
+  
+  .stat-card .stat-value {
+    font-size: 18px;
+  }
+  
+  .stat-card .stat-label {
+    font-size: 9px;
+    letter-spacing: 0.3px;
+  }
+  
+  .charts-row {
+    padding: 0 var(--space-sm) var(--space-sm);
     gap: var(--space-sm);
+  }
+  
+  .chart-card {
+    padding: var(--space-sm);
+  }
+  
+  .chart-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+  }
+  
+  .chart-header h3 {
+    font-size: 12px;
+  }
+  
+  .chart-container {
+    height: 150px;
+  }
+  
+  .chart-container--small {
+    height: 140px;
   }
   
   .bandwidth-stats {
     flex-direction: column;
     gap: var(--space-xs);
+    align-items: flex-start;
   }
   
+  .bandwidth-stat {
+    font-size: 11px;
+  }
+  
+  .calls-section {
+    margin: 0 var(--space-sm) var(--space-sm);
+    border-radius: var(--radius-md);
+  }
+  
+  .section-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+  
+  .section-header h3 {
+    font-size: 13px;
+  }
+  
+  .calls-filters {
+    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-xs);
+  }
+  
+  .calls-filters .filter-group {
+    min-width: 80px;
+  }
+  
+  .calls-filters .filter-group label {
+    font-size: 9px;
+  }
+  
+  .calls-filters .filter-select,
+  .calls-filters .filter-input {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  
+  .calls-filters .btn-clear-filters {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+  
+  .calls-table {
+    font-size: 11px;
+  }
+  
+  .calls-table th,
+  .calls-table td {
+    padding: var(--space-sm);
+  }
+  
+  .calls-table th {
+    font-size: 10px;
+  }
+  
+  .call-wallet {
+    font-size: 10px;
+  }
+  
+  .call-duration {
+    font-size: 11px;
+  }
+  
+  .call-status {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+  
+  .call-id {
+    font-size: 10px;
+    padding: 2px 4px;
+  }
+  
+  .call-time {
+    font-size: 11px;
+  }
+  
+  /* Hide more columns on phone */
   .calls-table th:nth-child(3),
   .calls-table td:nth-child(3),
   .calls-table th:nth-child(6),
@@ -563,6 +814,121 @@
   .calls-table th:nth-child(7),
   .calls-table td:nth-child(7) {
     display: none;
+  }
+  
+  .btn-toggle-wallet {
+    display: none;
+  }
+  
+  .calls-table-container {
+    max-height: 300px;
+  }
+  
+  .empty-state svg {
+    width: 40px;
+    height: 40px;
+  }
+  
+  .empty-state p {
+    font-size: 13px;
+  }
+  
+  .empty-state span {
+    font-size: 11px;
+  }
+  
+  .auto-refresh {
+    padding: var(--space-sm) var(--space-md);
+    flex-direction: column;
+    gap: var(--space-xs);
+    align-items: flex-start;
+  }
+  
+  .checkbox-label {
+    font-size: 11px;
+  }
+  
+  .refresh-countdown {
+    font-size: 10px;
+  }
+}
+
+/* Very small phone */
+@media (max-width: 380px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .stat-card:nth-child(5),
+  .stat-card:nth-child(6) {
+    grid-column: span 1;
+  }
+  
+  .stat-card .stat-value {
+    font-size: 16px;
+  }
+  
+  .stat-card .stat-label {
+    font-size: 8px;
+  }
+  
+  .period-tab {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 11px;
+  }
+  
+  .chart-container {
+    height: 130px;
+  }
+  
+  .chart-header h3 {
+    font-size: 11px;
+  }
+  
+  /* Hide Duration on very small phones */
+  .calls-table th:nth-child(4),
+  .calls-table td:nth-child(4) {
+    display: none;
+  }
+}
+
+/* Landscape phone */
+@media (max-height: 500px) and (orientation: landscape) {
+  .stats-grid {
+    grid-template-columns: repeat(6, 1fr);
+    padding: var(--space-xs) var(--space-md);
+  }
+  
+  .stat-card {
+    padding: var(--space-xs) var(--space-sm);
+    flex-direction: row;
+    gap: var(--space-sm);
+  }
+  
+  .stat-icon {
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+  }
+  
+  .stat-card .stat-value {
+    font-size: 16px;
+  }
+  
+  .charts-row {
+    display: none;
+  }
+  
+  .period-bar {
+    padding: var(--space-xs) var(--space-md);
+  }
+  
+  .calls-section {
+    margin: 0 var(--space-sm) var(--space-sm);
+  }
+  
+  .calls-table-container {
+    max-height: 200px;
   }
 }
 

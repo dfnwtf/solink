@@ -43,11 +43,65 @@ class CallManager {
     this.audioElement = null;
     this.ringtoneElement = null;
     
-    // Ring timeout in milliseconds (30 seconds)
-    this.RING_TIMEOUT_MS = 30000;
+    // Ring timeout in milliseconds (45 seconds - increased for slow connections)
+    this.RING_TIMEOUT_MS = 45000;
     
     // Event listeners
     this.listeners = new Map();
+    
+    // Track page inactivity
+    this.pageHiddenAt = null;
+    this.needsCleanupBeforeCall = false;
+    
+    // Handle page unload/close - gracefully end call
+    this.setupBeforeUnloadHandler();
+  }
+  
+  /**
+   * Setup handler for page close/refresh during active call
+   */
+  setupBeforeUnloadHandler() {
+    window.addEventListener('beforeunload', (event) => {
+      if (this.state !== CallState.IDLE && this.state !== CallState.ENDED) {
+        console.log('[CallManager] Page unloading during call, sending end signal');
+        // Send synchronous end signal if possible
+        if (this.signaling?.isConnected()) {
+          this.signaling.sendCallEnd(CallEndReason.DISCONNECTED);
+        }
+      }
+    });
+    
+    // Track when page was hidden
+    this.pageHiddenAt = null;
+    
+    // Handle visibility change (tab switching, minimizing)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        this.pageHiddenAt = Date.now();
+        console.log('[CallManager] Page hidden');
+      } else if (document.visibilityState === 'visible') {
+        const hiddenDuration = this.pageHiddenAt ? Date.now() - this.pageHiddenAt : 0;
+        console.log(`[CallManager] Page visible again, was hidden for ${Math.round(hiddenDuration / 1000)}s`);
+        this.pageHiddenAt = null;
+        
+        // If page was hidden for more than 2 minutes, reset call state on next call attempt
+        if (hiddenDuration > 2 * 60 * 1000) {
+          console.log('[CallManager] Page was hidden too long, marking for cleanup');
+          this.needsCleanupBeforeCall = true;
+        }
+      }
+    });
+  }
+  
+  /**
+   * Ensure clean state before starting a call (after long inactivity)
+   */
+  ensureCleanState() {
+    if (this.needsCleanupBeforeCall) {
+      console.log('[CallManager] Performing pre-call cleanup after long inactivity');
+      this.cleanup();
+      this.needsCleanupBeforeCall = false;
+    }
   }
 
   /**
@@ -121,6 +175,9 @@ class CallManager {
    * Initiate outgoing call
    */
   async initiateCall(calleeId, calleeName = null) {
+    // Clean up stale state if page was inactive for too long
+    this.ensureCleanState();
+    
     if (this.state !== CallState.IDLE) {
       throw new Error('Call already in progress');
     }
@@ -183,7 +240,9 @@ class CallManager {
         onCallAccepted: (from) => this.handleCallAccepted(from),
         onCallEnded: (reason, callState) => this.handleCallEnded(reason),
         onParticipantDisconnected: (participant) => this.handleParticipantDisconnected(participant),
-        onError: (error) => this.handleError(error),
+        onError: (error) => this.handleSignalingError(error),
+        onDisconnected: (event) => this.handleSignalingDisconnected(event),
+        onReconnecting: (info) => this.handleSignalingReconnecting(info),
       });
 
       // Get my pubkey from localStorage
@@ -297,6 +356,9 @@ class CallManager {
    * Handle incoming call (called from outside)
    */
   async handleIncomingCall(callInfo) {
+    // Clean up stale state if page was inactive for too long
+    this.ensureCleanState();
+    
     if (this.state !== CallState.IDLE) {
       console.warn('[CallManager] Busy, rejecting incoming call');
       // TODO: Send busy signal
@@ -320,7 +382,9 @@ class CallManager {
       onIceCandidate: (candidate, from) => this.handleIceCandidate(candidate, from),
       onCallEnded: (reason, callState) => this.handleCallEnded(reason),
       onParticipantDisconnected: (participant) => this.handleParticipantDisconnected(participant),
-      onError: (error) => this.handleError(error),
+      onError: (error) => this.handleSignalingError(error),
+      onDisconnected: (event) => this.handleSignalingDisconnected(event),
+      onReconnecting: (info) => this.handleSignalingReconnecting(info),
     });
 
     const myPubkey = this.getMyPubkey();
@@ -547,14 +611,23 @@ class CallManager {
   }
 
   handleCallAccepted(from) {
-    console.log('[CallManager] Call accepted by:', from);
+    console.log('[CallManager] Call accepted by:', from, 'current state:', this.state, 'isOutgoing:', this.currentCall?.isOutgoing);
+    
+    // Ignore if not in ringing state (might be duplicate or late message)
+    if (this.state !== CallState.RINGING) {
+      console.warn('[CallManager] Ignoring call_accepted, not in RINGING state');
+      return;
+    }
+    
     this.clearRingTimeout();
     this.stopRingtone();
     this.setState(CallState.CONNECTING);
 
     // Create and send offer (caller)
     if (this.currentCall?.isOutgoing) {
+      console.log('[CallManager] Creating offer as caller');
       this.webrtc?.createOffer().then(offer => {
+        console.log('[CallManager] Sending offer');
         this.signaling?.sendOffer(offer);
       }).catch(error => {
         console.error('[CallManager] Create offer error:', error);
@@ -617,6 +690,50 @@ class CallManager {
     }
 
     this.emit('connectionStateChange', state);
+  }
+
+  /**
+   * Handle signaling WebSocket error
+   * Don't end active calls - WebRTC works independently
+   */
+  handleSignalingError(error) {
+    console.error('[CallManager] Signaling error:', error);
+    
+    // Only treat as fatal error if we're not in an active call
+    // Active calls can survive signaling loss - WebRTC works peer-to-peer
+    if (this.state === CallState.ACTIVE) {
+      console.warn('[CallManager] Signaling error during active call - WebRTC should continue working');
+      this.emit('signalingError', error);
+      // Don't end the call - audio should still work
+    } else if (this.state !== CallState.IDLE && this.state !== CallState.ENDED) {
+      // For non-active states (INITIATING, RINGING, CONNECTING), this is fatal
+      console.error('[CallManager] Signaling error in non-active state, ending call');
+      this.emit('error', error);
+      this.endCall(CallEndReason.ERROR);
+    }
+  }
+  
+  /**
+   * Handle signaling WebSocket disconnection
+   */
+  handleSignalingDisconnected(event) {
+    console.log('[CallManager] Signaling disconnected, code:', event.code, 'state:', this.state);
+    
+    if (this.state === CallState.ACTIVE) {
+      // For active calls, signaling disconnect is not fatal
+      // WebRTC peer connection works independently
+      console.log('[CallManager] Signaling lost during active call - audio should continue');
+      this.emit('signalingLost', event);
+    }
+    // Reconnect logic is handled by CallSignaling itself
+  }
+  
+  /**
+   * Handle signaling reconnection attempt
+   */
+  handleSignalingReconnecting(info) {
+    console.log(`[CallManager] Signaling reconnecting: attempt ${info.attempt}/${info.maxAttempts}`);
+    this.emit('signalingReconnecting', info);
   }
 
   handleError(error) {

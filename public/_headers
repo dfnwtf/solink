@@ -1,0 +1,10 @@
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://cdn.skypack.dev https://cdn.jsdelivr.net https://esm.sh; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://cloudflareinsights.com https://*.helius.xyz https://*.solana.com wss://*.helius.xyz wss://*.solana.com https://api.dexscreener.com https://frontend-api-v3.pump.fun https://ipfs.io https://arweave.net https://nftstorage.link https://cf-ipfs.com https://cdn.jsdelivr.net https://cdn.skypack.dev https://esm.sh https://dfn.wtf https://solink-worker.official-716.workers.dev wss://solink-worker.official-716.workers.dev; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), geolocation=(), microphone=(self), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), midi=(), xr-spatial-tracking=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  Cross-Origin-Resource-Policy: same-origin
+  Cross-Origin-Opener-Policy: same-origin
+

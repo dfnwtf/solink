@@ -13,6 +13,13 @@ export class CallSignalingDurable extends DurableObject {
     // Map of participantId -> session data
     this.sessions = new Map();
     
+    // Call state - will be loaded from storage
+    this.callState = null;
+    this.callStateLoaded = false;
+    
+    // Grace period for reconnection (5 seconds)
+    this.RECONNECT_GRACE_PERIOD = 5000;
+    
     // Restore any hibernated WebSocket connections
     this.ctx.getWebSockets().forEach((ws) => {
       const attachment = ws.deserializeAttachment();
@@ -29,13 +36,55 @@ export class CallSignalingDurable extends DurableObject {
     this.ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}')
     );
+  }
+  
+  /**
+   * Load callState from storage (persists through hibernation)
+   */
+  async loadCallState() {
+    if (this.callStateLoaded) return;
     
-    // Call state stored in memory (will be lost on hibernation, but that's OK for short calls)
-    this.callState = null;
+    try {
+      const stored = await this.ctx.storage.get('callState');
+      if (stored) {
+        // Check if call is still valid (not older than 5 minutes)
+        const age = Date.now() - (stored.initiatedAt || 0);
+        if (age < 5 * 60 * 1000 && stored.status !== 'ended') {
+          this.callState = stored;
+          console.log(`[Call DO] Restored callState from storage:`, stored.callId);
+        } else {
+          // Clear expired call
+          await this.ctx.storage.delete('callState');
+          console.log(`[Call DO] Cleared expired callState`);
+        }
+      }
+    } catch (e) {
+      console.error(`[Call DO] Failed to load callState:`, e.message);
+    }
+    
+    this.callStateLoaded = true;
+  }
+  
+  /**
+   * Save callState to storage
+   */
+  async saveCallState() {
+    try {
+      if (this.callState) {
+        await this.ctx.storage.put('callState', this.callState);
+      } else {
+        await this.ctx.storage.delete('callState');
+      }
+    } catch (e) {
+      console.error(`[Call DO] Failed to save callState:`, e.message);
+    }
   }
 
   async fetch(request) {
     const url = new URL(request.url);
+    
+    // Load callState from storage (persists through hibernation)
+    await this.loadCallState();
     
     // WebSocket upgrade for real-time signaling
     if (request.headers.get("Upgrade") === "websocket") {
@@ -65,7 +114,7 @@ export class CallSignalingDurable extends DurableObject {
   /**
    * Handle WebSocket upgrade request
    */
-  handleWebSocketUpgrade(request, url) {
+  async handleWebSocketUpgrade(request, url) {
     const participantId = url.searchParams.get("participant");
     
     if (!participantId) {
@@ -73,6 +122,14 @@ export class CallSignalingDurable extends DurableObject {
     }
 
     console.log(`[Call DO] WebSocket upgrade for participant: ${participantId}`);
+
+    // Cancel any pending disconnection alarm for this participant (they're reconnecting)
+    const pending = await this.ctx.storage.get('pendingDisconnection');
+    if (pending && pending.participantId === participantId) {
+      console.log(`[Call DO] Cancelling pending disconnection alarm for: ${participantId}`);
+      await this.ctx.storage.delete('pendingDisconnection');
+      await this.ctx.storage.deleteAlarm();
+    }
 
     // Create WebSocket pair
     const webSocketPair = new WebSocketPair();
@@ -94,7 +151,7 @@ export class CallSignalingDurable extends DurableObject {
     console.log(`[Call DO] WebSocket connected: ${participantId}, total sessions: ${this.sessions.size}`);
 
     // Send current call state to new participant
-    if (this.callState) {
+    if (this.callState && this.callState.status !== 'ended') {
       try {
         server.send(JSON.stringify({
           type: "call_state",
@@ -116,6 +173,9 @@ export class CallSignalingDurable extends DurableObject {
    */
   async webSocketMessage(ws, message) {
     try {
+      // Load callState from storage (in case we woke from hibernation)
+      await this.loadCallState();
+      
       const attachment = ws.deserializeAttachment();
       const senderId = attachment?.participantId;
       
@@ -128,23 +188,27 @@ export class CallSignalingDurable extends DurableObject {
       console.log(`[Call DO] Message from ${senderId}:`, data.type);
 
       switch (data.type) {
+        case "ping":
+          // Explicit ping handling (in addition to auto-response)
+          this.sendTo(senderId, { type: "pong" });
+          break;
         case "offer":
           this.handleOffer(senderId, data);
           break;
         case "answer":
-          this.handleAnswer(senderId, data);
+          await this.handleAnswer(senderId, data);
           break;
         case "ice_candidate":
           this.handleIceCandidate(senderId, data);
           break;
         case "call_accept":
-          this.handleCallAccept(senderId);
+          await this.handleCallAccept(senderId);
           break;
         case "call_reject":
-          this.handleCallReject(senderId);
+          await this.handleCallReject(senderId);
           break;
         case "call_end":
-          this.handleCallEndSignal(senderId, data);
+          await this.handleCallEndSignal(senderId, data);
           break;
         default:
           console.warn(`[Call DO] Unknown message type: ${data.type}`);
@@ -158,25 +222,94 @@ export class CallSignalingDurable extends DurableObject {
    * Handle WebSocket close (Hibernation API handler)
    */
   async webSocketClose(ws, code, reason, wasClean) {
+    // Load callState from storage
+    await this.loadCallState();
+    
     const attachment = ws.deserializeAttachment();
     const participantId = attachment?.participantId;
     
-    console.log(`[Call DO] WebSocket closed: ${participantId}, code: ${code}, reason: ${reason}`);
+    console.log(`[Call DO] WebSocket closed: ${participantId}, code: ${code}, reason: ${reason}, wasClean: ${wasClean}, sessions: ${this.sessions.size}`);
     
     if (participantId) {
       this.sessions.delete(participantId);
+      console.log(`[Call DO] Removed session, remaining: ${this.sessions.size}`);
       
-      // Notify other participant about disconnection
-      if (this.callState && (this.callState.status === "active" || this.callState.status === "ringing")) {
-        this.broadcastExcept(participantId, {
-          type: "participant_disconnected",
-          participant: participantId
-        });
+      // Check if there's an active call that might be affected
+      if (this.callState && (this.callState.status === "active" || this.callState.status === "ringing" || this.callState.status === "connecting")) {
         
-        this.callState.status = "ended";
-        this.callState.endReason = "disconnected";
-        this.callState.endedAt = Date.now();
+        // For abnormal closures (1006, 1001), use alarm for delayed check
+        // This survives DO hibernation better than setTimeout
+        if (code === 1006 || code === 1001) {
+          console.log(`[Call DO] Abnormal closure, scheduling reconnection check via alarm`);
+          
+          // Store pending disconnection in storage for alarm to check
+          await this.ctx.storage.put('pendingDisconnection', {
+            participantId,
+            timestamp: Date.now()
+          });
+          
+          // Schedule alarm in 5 seconds (DO alarms survive hibernation)
+          await this.ctx.storage.setAlarm(Date.now() + this.RECONNECT_GRACE_PERIOD);
+          
+        } else {
+          // Clean closure (1000) - end call immediately
+          console.log(`[Call DO] Clean closure (${code}), ending call immediately`);
+          
+          this.broadcastExcept(participantId, {
+            type: "participant_disconnected",
+            participant: participantId
+          });
+          
+          this.callState.status = "ended";
+          this.callState.endReason = "disconnected";
+          this.callState.endedAt = Date.now();
+          await this.saveCallState();
+        }
       }
+    }
+  }
+  
+  /**
+   * Handle alarm (used for delayed disconnection check)
+   */
+  async alarm() {
+    console.log(`[Call DO] Alarm triggered`);
+    
+    const pending = await this.ctx.storage.get('pendingDisconnection');
+    if (!pending) {
+      console.log(`[Call DO] No pending disconnection`);
+      return;
+    }
+    
+    await this.ctx.storage.delete('pendingDisconnection');
+    
+    const { participantId, timestamp } = pending;
+    const age = Date.now() - timestamp;
+    
+    console.log(`[Call DO] Checking disconnection for ${participantId}, age: ${age}ms`);
+    
+    // Check if participant reconnected
+    if (this.sessions.has(participantId)) {
+      console.log(`[Call DO] ${participantId} reconnected, not ending call`);
+      return;
+    }
+    
+    // Load callState
+    await this.loadCallState();
+    
+    // Only end call if still in active state
+    if (this.callState && this.callState.status !== "ended") {
+      console.log(`[Call DO] Grace period expired, ending call due to ${participantId} disconnection`);
+      
+      this.broadcastExcept(participantId, {
+        type: "participant_disconnected",
+        participant: participantId
+      });
+      
+      this.callState.status = "ended";
+      this.callState.endReason = "disconnected";
+      this.callState.endedAt = Date.now();
+      await this.saveCallState();
     }
   }
 
@@ -190,7 +323,7 @@ export class CallSignalingDurable extends DurableObject {
 
   // === Call Management ===
 
-  handleInitiateCall(body) {
+  async handleInitiateCall(body) {
     const { callerId, calleeId, callerName } = body;
 
     if (!callerId || !calleeId) {
@@ -215,6 +348,9 @@ export class CallSignalingDurable extends DurableObject {
       endReason: null
     };
 
+    // Persist callState to storage
+    await this.saveCallState();
+
     console.log(`[Call DO] Call initiated: ${callerId} -> ${calleeId}, callId: ${callId}`);
 
     return json({ 
@@ -228,7 +364,7 @@ export class CallSignalingDurable extends DurableObject {
     return json({ callState: this.callState });
   }
 
-  handleEndCall(body) {
+  async handleEndCall(body) {
     const { reason } = body;
 
     if (this.callState) {
@@ -241,6 +377,9 @@ export class CallSignalingDurable extends DurableObject {
         reason: this.callState.endReason,
         callState: this.callState
       });
+      
+      // Clear from storage
+      await this.saveCallState();
     }
 
     return json({ success: true });
@@ -263,7 +402,7 @@ export class CallSignalingDurable extends DurableObject {
     }
   }
 
-  handleAnswer(senderId, data) {
+  async handleAnswer(senderId, data) {
     const targetId = this.getOtherParticipant(senderId);
     
     if (targetId) {
@@ -275,9 +414,10 @@ export class CallSignalingDurable extends DurableObject {
       });
     }
 
-    if (this.callState && this.callState.status === "ringing") {
+    if (this.callState && (this.callState.status === "ringing" || this.callState.status === "connecting")) {
       this.callState.status = "active";
       this.callState.answeredAt = Date.now();
+      await this.saveCallState();
     }
   }
 
@@ -293,26 +433,41 @@ export class CallSignalingDurable extends DurableObject {
     }
   }
 
-  handleCallAccept(senderId) {
+  async handleCallAccept(senderId) {
+    console.log(`[Call DO] handleCallAccept from ${senderId}, callState: ${JSON.stringify(this.callState)}`);
+    
     if (this.callState && this.callState.calleeId === senderId) {
       this.callState.status = "connecting";
       
-      console.log(`[Call DO] Call accepted by ${senderId}`);
+      console.log(`[Call DO] Call accepted by ${senderId}, notifying caller: ${this.callState.callerId}`);
+      await this.saveCallState();
       
-      this.sendTo(this.callState.callerId, {
+      const sent = this.sendTo(this.callState.callerId, {
         type: "call_accepted",
         from: senderId
       });
+      
+      if (!sent) {
+        console.error(`[Call DO] CRITICAL: Failed to notify caller ${this.callState.callerId} about call acceptance!`);
+        // Broadcast to all connected sessions as fallback
+        this.broadcast({
+          type: "call_accepted",
+          from: senderId
+        });
+      }
+    } else {
+      console.warn(`[Call DO] handleCallAccept: callState mismatch or null. calleeId: ${this.callState?.calleeId}, senderId: ${senderId}`);
     }
   }
 
-  handleCallReject(senderId) {
+  async handleCallReject(senderId) {
     if (this.callState) {
       this.callState.status = "ended";
       this.callState.endReason = "rejected";
       this.callState.endedAt = Date.now();
 
       console.log(`[Call DO] Call rejected by ${senderId}`);
+      await this.saveCallState();
 
       this.broadcast({
         type: "call_ended",
@@ -322,13 +477,14 @@ export class CallSignalingDurable extends DurableObject {
     }
   }
 
-  handleCallEndSignal(senderId, data) {
+  async handleCallEndSignal(senderId, data) {
     if (this.callState) {
       this.callState.status = "ended";
       this.callState.endReason = data.reason || "ended_by_user";
       this.callState.endedAt = Date.now();
 
       console.log(`[Call DO] Call ended by ${senderId}`);
+      await this.saveCallState();
 
       this.broadcastExcept(senderId, {
         type: "call_ended",
@@ -353,16 +509,25 @@ export class CallSignalingDurable extends DurableObject {
 
   sendTo(participantId, message) {
     const session = this.sessions.get(participantId);
+    console.log(`[Call DO] sendTo ${participantId}: ${message.type}, hasSession: ${!!session}, wsState: ${session?.ws?.readyState}`);
+    
     if (session?.ws) {
       try {
-        session.ws.send(JSON.stringify(message));
-        return true;
+        // Check WebSocket is actually open (readyState 1 = OPEN)
+        if (session.ws.readyState === 1) {
+          session.ws.send(JSON.stringify(message));
+          console.log(`[Call DO] Sent ${message.type} to ${participantId}`);
+          return true;
+        } else {
+          console.warn(`[Call DO] WebSocket not open for ${participantId}, state: ${session.ws.readyState}`);
+          this.sessions.delete(participantId);
+        }
       } catch (e) {
         console.error(`[Call DO] Failed to send to ${participantId}:`, e.message);
         this.sessions.delete(participantId);
       }
     } else {
-      console.log(`[Call DO] No WebSocket session for: ${participantId}`);
+      console.warn(`[Call DO] No WebSocket session for: ${participantId}, available sessions: ${Array.from(this.sessions.keys()).join(', ')}`);
     }
     return false;
   }

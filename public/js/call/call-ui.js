@@ -107,7 +107,7 @@ class CallUI {
     if (this.container) {
       this.container.classList.add('call-overlay--minimized');
     }
-    this.render(callManager.state === CallState.ACTIVE ? 'active' : 'outgoing');
+    this.render(this.getRenderType());
   }
 
   maximize() {
@@ -115,7 +115,7 @@ class CallUI {
     if (this.container) {
       this.container.classList.remove('call-overlay--minimized');
     }
-    this.render(callManager.state === CallState.ACTIVE ? 'active' : 'outgoing');
+    this.render(this.getRenderType());
   }
 
   render(type) {
@@ -453,6 +453,18 @@ class CallUI {
     this.container.querySelector('[data-action="end"]')?.addEventListener('click', () => {
       callManager.endCall();
     });
+  }
+
+  // Determine which view to render based on call state and direction
+  getRenderType() {
+    const state = callManager.state;
+    if (state === CallState.ACTIVE || state === CallState.CONNECTING) {
+      return 'active';
+    }
+    if (this.currentCall?.isOutgoing) {
+      return 'outgoing';
+    }
+    return 'incoming';
   }
 
   // Call manager event handlers

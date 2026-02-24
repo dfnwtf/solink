@@ -700,7 +700,8 @@ async function encryptFullBackup(data) {
     combined.set(nonce);
     combined.set(encrypted, nonce.length);
     
-    return btoa(String.fromCharCode(...combined));
+    // Use chunked conversion to avoid stack overflow with large data
+    return uint8ArrayToBase64(combined);
   } catch (error) {
     console.error("[CloudSync] Encryption error:", error);
     return null;

@@ -11,6 +11,7 @@ const PHANTOM_SIGN_TRANSACTION_URL = 'https://phantom.app/ul/v1/signAndSendTrans
 
 const MOBILE_SESSION_KEY = 'solink.phantom.mobile.session';
 const MOBILE_KEYPAIR_KEY = 'solink.phantom.mobile.keypair';
+const MOBILE_CHALLENGE_KEY = 'solink.phantom.mobile.challenge';
 
 // Base58 encoding/decoding
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -67,6 +68,16 @@ function decodeBase58(str) {
   }
   
   return new Uint8Array(bytes.reverse());
+}
+
+// Prepare mobile auth - generate keypair and return dappPublicKey
+// Call this BEFORE getting challenge from server
+export function prepareMobileAuth() {
+  const keypair = nacl.box.keyPair();
+  saveKeypair(keypair);
+  const dappPublicKey = encodeBase58(keypair.publicKey);
+  console.log('[Phantom Mobile] Prepared keypair, dappPublicKey:', dappPublicKey);
+  return dappPublicKey;
 }
 
 // Storage helpers - using localStorage to survive redirects on iOS Safari
@@ -199,6 +210,51 @@ function clearPendingAction() {
   }
 }
 
+// Challenge storage for mobile auth (survives redirect)
+function saveMobileChallenge(challenge, dappPublicKey) {
+  try {
+    const data = {
+      challenge,
+      dappPublicKey,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(MOBILE_CHALLENGE_KEY, JSON.stringify(data));
+    console.log('[Phantom Mobile] Challenge saved:', data);
+  } catch (e) {
+    console.warn('Failed to save challenge', e);
+  }
+}
+
+export function loadMobileChallenge() {
+  try {
+    const data = localStorage.getItem(MOBILE_CHALLENGE_KEY);
+    if (!data) {
+      console.log('[Phantom Mobile] No challenge found');
+      return null;
+    }
+    const parsed = JSON.parse(data);
+    // Check if challenge is not too old (5 minutes max)
+    if (parsed.timestamp && Date.now() - parsed.timestamp > 5 * 60 * 1000) {
+      console.log('[Phantom Mobile] Challenge expired');
+      clearMobileChallenge();
+      return null;
+    }
+    console.log('[Phantom Mobile] Challenge loaded');
+    return parsed;
+  } catch (e) {
+    console.error('[Phantom Mobile] Failed to load challenge', e);
+    return null;
+  }
+}
+
+export function clearMobileChallenge() {
+  try {
+    localStorage.removeItem(MOBILE_CHALLENGE_KEY);
+  } catch (e) {
+    // ignore
+  }
+}
+
 // Build redirect URL for current page
 function buildRedirectUrl(action) {
   const url = new URL(window.location.href);
@@ -215,19 +271,52 @@ function buildRedirectUrl(action) {
 }
 
 // Build Phantom connect deeplink
-export function buildConnectUrl() {
-  // Generate X25519 keypair using nacl.box.keyPair
-  const keypair = nacl.box.keyPair();
-  saveKeypair(keypair);
+export function buildConnectUrl(challenge = null) {
+  // Use existing keypair if available (from prepareMobileAuth), otherwise generate new
+  let existingKeypair = loadKeypair();
+  let dappPublicKey;
+  
+  if (existingKeypair) {
+    // Use existing keypair
+    dappPublicKey = encodeBase58(existingKeypair.publicKey);
+    console.log('[Phantom Mobile] Using existing keypair');
+  } else {
+    // Generate new X25519 keypair
+    const keypair = nacl.box.keyPair();
+    saveKeypair(keypair);
+    dappPublicKey = encodeBase58(keypair.publicKey);
+    console.log('[Phantom Mobile] Generated new keypair');
+  }
+  
+  // Save challenge with dappPublicKey for later verification
+  if (challenge) {
+    saveMobileChallenge(challenge, dappPublicKey);
+  }
   
   const params = new URLSearchParams({
     app_url: window.location.origin,
-    dapp_encryption_public_key: encodeBase58(keypair.publicKey),
+    dapp_encryption_public_key: dappPublicKey,
     redirect_link: buildRedirectUrl('connect'),
     cluster: 'mainnet-beta'
   });
   
   return `${PHANTOM_CONNECT_URL}?${params.toString()}`;
+}
+
+// Get dapp public key (for server verification)
+export function getDappPublicKey() {
+  const keypair = loadKeypair();
+  if (!keypair) return null;
+  return encodeBase58(keypair.publicKey);
+}
+
+// Generate new keypair and return dappPublicKey (for mobile auth init)
+export function generateDappKeyPair() {
+  const keypair = nacl.box.keyPair();
+  saveKeypair(keypair);
+  const dappPublicKey = encodeBase58(keypair.publicKey);
+  console.log('[Phantom Mobile] Generated new dappPublicKey:', dappPublicKey);
+  return dappPublicKey;
 }
 
 // Build Phantom sign message deeplink
@@ -585,9 +674,10 @@ export function getPendingAction() {
   return loadPendingAction();
 }
 
-// Initiate mobile connect flow
-export function initiateMobileConnect() {
-  const url = buildConnectUrl();
+// Initiate mobile connect flow (with optional challenge for secure auth)
+export function initiateMobileConnect(challenge = null) {
+  const url = buildConnectUrl(challenge);
+  console.log('[Phantom Mobile] Initiating connect with URL:', url);
   window.location.href = url;
 }
 

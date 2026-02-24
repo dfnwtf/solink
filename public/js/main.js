@@ -1,4 +1,4 @@
-import { fetchNonce, verifySignature, clearSessionToken, getSessionToken, getPersistedSession, SESSION_MAX_AGE_MS } from './api.js';
+import { fetchNonce, verifySignature, clearSessionToken, getSessionToken, getPersistedSession, SESSION_MAX_AGE_MS, initMobileAuth, verifyMobileAuth } from './api.js';
 import {
   hasPhantomCallback,
   parsePhantomCallback,
@@ -13,7 +13,11 @@ import {
   clearMobileSessionData,
   redirectToPhantomBrowser,
   getPendingAction,
-  hasMobileSession
+  hasMobileSession,
+  loadMobileChallenge,
+  clearMobileChallenge,
+  getDappPublicKey,
+  prepareMobileAuth
 } from './phantom-mobile.js';
 
 const AUTO_CONNECT_FLAG_KEY = 'solink-auto-connect';
@@ -22,12 +26,26 @@ const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvw
 const BASE58_MAP = BASE58_ALPHABET.split('');
 const MOBILE_REGEX = /android|iphone|ipad|ipod/i;
 
+// Better detection for iPad with Desktop UA (iPadOS 13+)
+function detectMobile() {
+  const ua = navigator.userAgent || '';
+  if (MOBILE_REGEX.test(ua)) return true;
+  
+  // iPad with Desktop UA: appears as Mac but has touch support
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) {
+    return true;
+  }
+  
+  return false;
+}
+
 const state = {
   provider: null,
   walletPubkey: null,
   isAuthenticated: false,
   route: parseRoute(location.hash),
-  isMobile: MOBILE_REGEX.test(navigator.userAgent || ''),
+  isMobile: detectMobile(),
+  pendingMobileSign: false, // Flag for iOS: user needs to tap to continue signing
 };
 
 const listeners = new Set();
@@ -209,16 +227,61 @@ async function handlePhantomMobileCallback() {
       updateState({ walletPubkey: pubkey });
       clearPhantomParams();
       
-      // Now we need to sign a message for authentication
-      // Fetch nonce from server and save it for later verification
+      // New mobile auth: verify with challenge (no second signature needed!)
+      const savedChallenge = loadMobileChallenge();
+      
+      console.log('[Phantom Mobile] Saved challenge data:', savedChallenge);
+      
+      // Use dappPublicKey from saved challenge (more reliable than getDappPublicKey)
+      if (savedChallenge?.challenge && savedChallenge?.dappPublicKey) {
+        // Use new challenge-based auth
+        console.log('[Phantom Mobile] Using challenge-based auth (single step!)');
+        console.log('[Phantom Mobile] Challenge:', savedChallenge.challenge);
+        console.log('[Phantom Mobile] DappPublicKey:', savedChallenge.dappPublicKey);
+        
+        try {
+          const verifyResult = await verifyMobileAuth({
+            pubkey,
+            dappPublicKey: savedChallenge.dappPublicKey,
+            challenge: savedChallenge.challenge
+          });
+          
+          console.log('[Phantom Mobile] Verify result:', verifyResult);
+          clearMobileChallenge();
+          
+          updateState({
+            walletPubkey: pubkey,
+            isAuthenticated: Boolean(verifyResult?.token),
+            pendingMobileSign: false
+          });
+          
+          if (verifyResult?.token) {
+            enableAutoConnect();
+            scheduleSessionCheck();
+            console.log('[Phantom Mobile] SUCCESS! User authenticated (single step).');
+          }
+          
+          return true;
+        } catch (error) {
+          console.error('[Phantom Mobile] Challenge verification failed:', error);
+          clearMobileChallenge();
+          // Fall through to legacy flow
+        }
+      } else {
+        console.log('[Phantom Mobile] No valid challenge found, falling back to legacy flow');
+      }
+      
+      // Legacy flow: need second signature (fallback)
+      console.log('[Phantom Mobile] Falling back to legacy sign flow...');
       console.log('[Phantom Mobile] Fetching nonce for:', pubkey);
       const { nonce } = await fetchNonce(pubkey);
       console.log('[Phantom Mobile] Got nonce:', nonce);
       savePendingNonce(pubkey, nonce);
       
-      // Initiate sign with the nonce as message
-      console.log('[Phantom Mobile] Initiating sign...');
-      initiateMobileSign(nonce);
+      // iOS Safari blocks programmatic redirects without user gesture
+      // Set flag to show "Continue" button instead of auto-redirect
+      console.log('[Phantom Mobile] Setting pendingMobileSign flag (iOS requires user tap)');
+      updateState({ pendingMobileSign: true });
       return true;
     }
     
@@ -313,9 +376,26 @@ function getProvider() {
   return null;
 }
 
-function redirectToPhantomApp() {
-  // Use deeplinks for mobile connection (2-step flow: connect + sign)
-  initiateMobileConnect();
+async function redirectToPhantomApp() {
+  // Mobile auth flow: get challenge from server, then redirect to Phantom
+  try {
+    console.log('[Phantom Mobile] Starting mobile auth flow...');
+    
+    // Step 1: Generate keypair and get dappPublicKey
+    const dappPublicKey = prepareMobileAuth();
+    console.log('[Phantom Mobile] Generated dappPublicKey:', dappPublicKey);
+    
+    // Step 2: Get challenge from server
+    const { challenge } = await initMobileAuth(dappPublicKey);
+    console.log('[Phantom Mobile] Got challenge from server:', challenge);
+    
+    // Step 3: Save challenge locally and redirect to Phantom
+    initiateMobileConnect(challenge);
+  } catch (error) {
+    console.error('[Phantom Mobile] Failed to start mobile auth:', error);
+    // Fallback: open in Phantom browser (works but user stays inside Phantom)
+    redirectToPhantomBrowser();
+  }
 }
 
 function handleDisconnect() {
@@ -355,7 +435,7 @@ async function connectWallet({ silent = false, allowRedirect = false } = {}) {
 
   if (!provider) {
     if (allowRedirect && state.isMobile) {
-      redirectToPhantomApp();
+      await redirectToPhantomApp();
       return;
     }
     const error = new Error('Phantom wallet not found');
@@ -452,6 +532,81 @@ export function isMobileDevice() {
 
 export { initiateMobileTransaction, hasMobileSession };
 
+// Check if there's a pending mobile sign (iOS Safari flow)
+// This checks localStorage directly - survives page reload/new tab
+export function hasPendingMobileSign() {
+  console.log('[Phantom Mobile] hasPendingMobileSign check:');
+  console.log('[Phantom Mobile] - isMobile:', state.isMobile);
+  
+  // Only show on mobile devices
+  if (!state.isMobile) {
+    console.log('[Phantom Mobile] - Not mobile, returning false');
+    return false;
+  }
+  
+  // Check if we have a pending nonce in localStorage
+  const pending = loadPendingNonce();
+  console.log('[Phantom Mobile] - pending nonce:', pending);
+  if (!pending?.nonce) {
+    console.log('[Phantom Mobile] - No pending nonce, returning false');
+    return false;
+  }
+  
+  // Also need mobile session (from connect callback)
+  const hasSession = hasMobileSession();
+  console.log('[Phantom Mobile] - hasMobileSession:', hasSession);
+  if (!hasSession) {
+    console.log('[Phantom Mobile] - No mobile session, returning false');
+    return false;
+  }
+  
+  console.log('[Phantom Mobile] - All checks passed, returning true');
+  return true;
+}
+
+// Continue mobile sign flow (called from user click on iOS)
+export function continueMobileSign() {
+  console.log('[Phantom Mobile] continueMobileSign called');
+  
+  try {
+    const pending = loadPendingNonce();
+    console.log('[Phantom Mobile] Pending nonce data:', pending);
+    
+    if (!pending?.nonce) {
+      console.error('[Phantom Mobile] No pending nonce for sign');
+      updateState({ pendingMobileSign: false });
+      return false;
+    }
+    
+    // Check if we have mobile session
+    const session = getMobileSession();
+    console.log('[Phantom Mobile] Mobile session:', session);
+    
+    if (!session) {
+      console.error('[Phantom Mobile] No mobile session found');
+      updateState({ pendingMobileSign: false });
+      return false;
+    }
+    
+    console.log('[Phantom Mobile] Continuing sign flow with nonce:', pending.nonce);
+    updateState({ pendingMobileSign: false });
+    
+    // This redirect should work because it's triggered by user click
+    initiateMobileSign(pending.nonce);
+    return true;
+  } catch (error) {
+    console.error('[Phantom Mobile] Error in continueMobileSign:', error);
+    updateState({ pendingMobileSign: false });
+    return false;
+  }
+}
+
+// Clear pending mobile sign state
+export function clearPendingMobileSign() {
+  updateState({ pendingMobileSign: false });
+  clearPendingNonce();
+}
+
 export async function requestConnect(options = {}) {
   try {
     await connectWallet({ allowRedirect: true });
@@ -465,7 +620,14 @@ export async function requestConnect(options = {}) {
 }
 
 export async function initApp() {
-  // Check for Phantom mobile callback first
+  // Clear stale mobile session data on fresh load (no callback expected)
+  // This prevents showing "Continue to sign" panel when not needed
+  if (!hasPhantomCallback()) {
+    clearMobileSessionData();
+    clearPendingNonce();
+  }
+  
+  // Check for Phantom mobile callback
   if (hasPhantomCallback()) {
     try {
       const handled = await handlePhantomMobileCallback();
@@ -476,6 +638,7 @@ export async function initApp() {
     } catch (error) {
       console.error('Mobile callback handling failed:', error);
       clearPhantomParams();
+      clearMobileChallenge();
     }
   }
   
@@ -522,7 +685,8 @@ export async function logout() {
   clearSessionToken();
   clearMobileSessionData();
   clearPendingNonce();
-  updateState({ walletPubkey: null, isAuthenticated: false });
+  clearMobileChallenge();
+  updateState({ walletPubkey: null, isAuthenticated: false, pendingMobileSign: false });
   clearTimeout(sessionCheckTimer);
   sessionCheckTimer = null;
 }
