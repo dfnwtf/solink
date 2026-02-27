@@ -6,7 +6,7 @@
 
 Started SOLink.
 
-The idea felt clear, but the actual implementation didn’t. Solana’s web3 stack wasn’t really designed for browsers, so the first day turned into a small expedition: polyfilling missing pieces, patching imports, and figuring out how to make the basics even run inside a normal webpage.
+The idea felt clear, but the actual implementation didn't. Solana's web3 stack wasn't really designed for browsers, so the first day turned into a small expedition: polyfilling missing pieces, patching imports, and figuring out how to make the basics even run inside a normal webpage.
 
 At the same time I laid out the foundation for the messenger itself — chat lists, simple UI structure, first design choices. Nothing polished yet, but the direction finally appeared.
 
@@ -23,7 +23,7 @@ I also refined the chat list, improved text handling, and shaped the interface s
 Redesign.
 
 Took a step back and rebuilt the entire look.
-I wanted SOLink to feel like something you’d actually want to use — clean, calm, without unnecessary noise. Reworked layouts, typography, spacing, and adapted everything for mobile. The project finally looked alive instead of experimental.
+I wanted SOLink to feel like something you'd actually want to use — clean, calm, without unnecessary noise. Reworked layouts, typography, spacing, and adapted everything for mobile. The project finally looked alive instead of experimental.
 
 # November 28 — Day 4
 
@@ -63,14 +63,15 @@ Voice messages.
 
 Added encrypted voice messages with waveform visualization.
 Playback turned out trickier than expected, so I spent time refining the seeking and timing.
-Finished the day by creating a Dev Console to monitor events — something I didn’t plan originally, but it already proved useful.
+Finished the day by creating a Dev Console to monitor events — something I didn't plan originally, but it already proved useful.
 
 # December 3 — Day 9
 
-Analytics.
+Audio Calls and Analytics.
 
-The Dev Console grew into a proper dashboard with charts, timelines, and health checks.
-Also made it responsive enough to use on mobile, since I tend to debug everywhere.
+A major milestone — implemented end-to-end encrypted audio calls with WebRTC. Built the signaling system, call manager, and UI components. Calls work peer-to-peer with proper state management, ringtones, and call controls.
+
+The Dev Console also grew into a proper dashboard with charts, timelines, and health checks. Made it responsive enough to use on mobile, since I tend to debug everywhere.
 
 # December 4 — Day 10
 
@@ -79,10 +80,56 @@ Icons.
 Redrew all icons to match the new SOLink symbol.
 Cleaner lines, lighter strokes — small change, but the interface feels more unified now.
 
+# December 5 — Day 11
+
+Documentation.
+
+Started documenting the journey. Created this development log to capture the process — the decisions, the struggles, the small wins that add up over time.
+
+Sometimes stepping back and writing about what you've built helps you see the progress more clearly.
+
+# December 6 — Day 12
+
+Presentation materials.
+
+Built a presentation gallery with SVG cards showcasing SOLink's architecture, security features, and token scanner. Created clean, shareable visuals that explain the project without needing to dive into code.
+
+Also added a Documents section to the README to make these resources easy to find.
+
+# December 7 — Day 13
+
+Visual polish.
+
+Updated the wallet identity globe icon and made small visual tweaks. These micro-adjustments might seem minor, but they contribute to that feeling of a finished product rather than a work in progress.
+
+# December 8 — Day 14
+
+Call-to-action.
+
+Added a CTA slide to the Documents gallery. Started thinking about how to present SOLink to potential users — not just what it does, but why someone would want to use it.
+
+# December 9 — Day 15
+
+Landing and calls.
+
+Refined the landing page layout and improved the presentation flow. Updated call audio cues to make the calling experience feel more natural.
+
+Also updated project structure documentation — keeping things organized as the codebase grows.
+
+# December 10 — Day 16
+
+Robustness and details.
+
+Improved signaling robustness for audio calls — making sure connections stay stable even when networks are unreliable. Enhanced backup encoding and presentation flow.
+
+Added a small but useful detail: showing token prices with fixed decimals in the UI, so tiny values don't display as scientific notation.
+
 # Summary
 
-Ten days of work, 135 commits, and a project that slowly turned from “maybe I can build this” into something people could actually use.
+Sixteen days of work, and a project that slowly turned from "maybe I can build this" into something people could actually use.
 
 Building SOLink has been less about following a rigid plan and more about exploring — trying things, breaking things, finding better paths, and shaping the product one decision at a time.
 
-There’s still a long way ahead, but the foundation feels strong.
+The addition of audio calls felt like a major milestone. It's one of those features that transforms a messenger from "nice to have" into "actually useful." Combined with encrypted voice messages, push notifications, cloud sync, and the token scanner, SOLink is starting to feel like a complete product.
+
+There's still a long way ahead, but the foundation feels strong.
