@@ -133,3 +133,4 @@ Building SOLink has been less about following a rigid plan and more about explor
 The addition of audio calls felt like a major milestone. It's one of those features that transforms a messenger from "nice to have" into "actually useful." Combined with encrypted voice messages, push notifications, cloud sync, and the token scanner, SOLink is starting to feel like a complete product.
 
 There's still a long way ahead, but the foundation feels strong.
+
