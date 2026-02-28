@@ -6606,8 +6606,16 @@ function formatNumber(num) {
 function formatPrice(price) {
   if (!price || isNaN(price)) return '—';
   const p = parseFloat(price);
-  if (p < 0.00001) return `$${p.toExponential(2)}`;
-  if (p < 0.01) return `$${p.toFixed(6)}`;
+
+  // Show tiny prices in fixed-point form (no scientific notation) with trimmed zeros
+  if (p < 0.01) {
+    const decimals = p < 0.00001 ? 10 : 8; // more precision for ultra-low prices
+    const fixed = p.toFixed(decimals);
+    // Trim trailing zeros and possible trailing dot
+    const cleaned = fixed.replace(/0+$/, '').replace(/\.$/, '');
+    return `$${cleaned}`;
+  }
+
   if (p < 1) return `$${p.toFixed(4)}`;
   return `$${p.toFixed(2)}`;
 }
