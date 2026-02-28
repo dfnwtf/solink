@@ -69,7 +69,7 @@ Finished the day by creating a Dev Console to monitor events — something I did
 
 Audio Calls and Analytics.
 
-A major milestone — implemented end-to-end encrypted audio calls with WebRTC. Built the signaling system, call manager, and UI components. Calls work peer-to-peer with proper state management, ringtones, and call controls.
+A major milestone — finished implementing end-to-end encrypted audio calls with WebRTC. Completed the signaling system, call manager, and UI components. Calls work peer-to-peer with proper state management, ringtones, and call controls. After days of prototyping and architecture work, everything finally came together.
 
 The Dev Console also grew into a proper dashboard with charts, timelines, and health checks. Made it responsive enough to use on mobile, since I tend to debug everywhere.
 
@@ -98,15 +98,19 @@ Also added a Documents section to the README to make these resources easy to fin
 
 # December 7 — Day 13
 
-Visual polish.
+Audio calls foundation.
 
-Updated the wallet identity globe icon and made small visual tweaks. These micro-adjustments might seem minor, but they contribute to that feeling of a finished product rather than a work in progress.
+Started exploring WebRTC for audio calls. Researched signaling approaches, tested peer-to-peer connection setup, and began sketching the architecture. WebRTC in a browser environment has its quirks — handling ICE candidates, managing connection states, dealing with network changes.
+
+Also updated the wallet identity globe icon and made small visual tweaks. These micro-adjustments might seem minor, but they contribute to that feeling of a finished product rather than a work in progress.
 
 # December 8 — Day 14
 
-Call-to-action.
+Audio calls architecture.
 
-Added a CTA slide to the Documents gallery. Started thinking about how to present SOLink to potential users — not just what it does, but why someone would want to use it.
+Continued working on the audio calls system. Designed the signaling protocol, planned the call state machine, and started building the WebRTC client wrapper. The challenge is making it work reliably across different network conditions while keeping encryption end-to-end.
+
+Also added a CTA slide to the Documents gallery. Started thinking about how to present SOLink to potential users — not just what it does, but why someone would want to use it.
 
 # December 9 — Day 15
 
